@@ -168,6 +168,20 @@ export default function CallerVoice() {
     [setSpeechTranscript, evaluateUserBehavior, isBusyOnCall]
   );
 
+  // Interrupt talking AI immediately when user starts speaking
+  const handleSpeechStart = useCallback(() => {
+    AIService.stopSpeech();
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+    if (countdownIntervalRef.current) {
+      clearInterval(countdownIntervalRef.current);
+      countdownIntervalRef.current = null;
+    }
+    setAutoDispatchCountdown(null);
+  }, []);
+
   const {
     isListening: isMicActive,
     transcript: micTranscript,
@@ -178,7 +192,7 @@ export default function CallerVoice() {
     startListening,
     stopListening,
     isOpenAIActive,
-  } = useLiveSpeech(handleTranscriptUpdate);
+  } = useLiveSpeech(handleTranscriptUpdate, handleSpeechStart);
 
   stopListeningRef.current = stopListening;
   startListeningRef.current = startListening;

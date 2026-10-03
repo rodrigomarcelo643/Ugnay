@@ -405,6 +405,13 @@ export const AIService = {
   },
 
   /**
+   * Immediately interrupts / pauses ongoing AI speech when caller starts speaking (barge-in).
+   */
+  interruptSpeech(): void {
+    this.stopSpeech();
+  },
+
+  /**
    * Speaks greeting or phrase using OpenAI TTS audio or Web Speech API matching selected dialect/language.
    */
   async speakGreeting(customText?: string, langOverride?: string): Promise<void> {

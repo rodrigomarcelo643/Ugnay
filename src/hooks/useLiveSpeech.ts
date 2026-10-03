@@ -1,4 +1,4 @@
-import { sanitizeTranscript } from '@/services/ai';
+import { AIService, sanitizeTranscript } from '@/services/ai';
 import { useIncidentStore } from '@/store/incidentStore';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Platform } from 'react-native';
@@ -402,6 +402,10 @@ export function useLiveSpeech(
         // Voice Activity Detection (VAD)
         if (normalized > 12) {
           hasSpokenRecentlyRef.current = true;
+          // User barge-in: immediately silence/pause AI speaking when user speaks
+          if (AIService.isSpeaking()) {
+            AIService.interruptSpeech();
+          }
           if (silenceFlushTimerRef.current) {
             clearTimeout(silenceFlushTimerRef.current);
             silenceFlushTimerRef.current = null;
@@ -505,6 +509,9 @@ export function useLiveSpeech(
           };
 
           recognition.onspeechstart = () => {
+            if (AIService.isSpeaking()) {
+              AIService.interruptSpeech();
+            }
             if (onSpeechStartRef.current) {
               onSpeechStartRef.current();
             }
@@ -525,6 +532,9 @@ export function useLiveSpeech(
             }
 
             if (currentInterim.trim()) {
+              if (AIService.isSpeaking()) {
+                AIService.interruptSpeech();
+              }
               if (onSpeechStartRef.current) {
                 onSpeechStartRef.current();
               }

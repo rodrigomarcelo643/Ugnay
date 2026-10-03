@@ -6,8 +6,6 @@ import { useIncidentStore } from '@/store/incidentStore';
 import { AnimatedVoiceOrb } from '@/components/ui/AnimatedVoiceOrb';
 import { LocationDisplay } from '@/components/ui/LocationDisplay';
 import { useDeviceLocation } from '@/hooks/useDeviceLocation';
-import { useLiveSpeech } from '@/hooks/useLiveSpeech';
-import { AIService, sanitizeTranscript } from '@/services/ai';
 import { supabaseService } from '@/services/supabase';
 import { LiveCallTranscript } from '@/components/ui/LiveCallTranscript';
 import { ConnectionStatus } from '@/components/ui/ConnectionStatus';
@@ -48,10 +46,7 @@ export default function CallerHome() {
   const router = useRouter();
   const { user } = useAuth();
   const {
-    isListening,
     setIsListening,
-    speechTranscript,
-    setSpeechTranscript,
     resetIncident,
     selectedLanguage,
     setSelectedLanguage,
@@ -62,11 +57,6 @@ export default function CallerHome() {
   const [dbIncidents, setDbIncidents] = useState<any[]>([]);
 
   React.useEffect(() => {
-    // Speak OpenAI Voice Greeting matching selected language once loaded
-    const greetingTimer = setTimeout(() => {
-      AIService.speakGreeting(undefined, selectedLanguage);
-    }, 600);
-
     // Fetch initial active incidents from Supabase
     supabaseService.fetchIncidents().then(setDbIncidents);
 
@@ -76,99 +66,19 @@ export default function CallerHome() {
     });
 
     return () => {
-      clearTimeout(greetingTimer);
       if (channel) channel.unsubscribe();
-      stopListeningRef.current();
     };
-  }, []);
-
-  const isRedirectingRef = React.useRef(false);
-  const stopListeningRef = React.useRef<() => void>(() => {});
-
-  // Directly redirect to Voice AI as soon as speech starts
-  const handleSpeechStart = React.useCallback(() => {
-    if (isRedirectingRef.current) return;
-    isRedirectingRef.current = true;
-    setIsListening(true);
-    stopListeningRef.current();
-    router.push('/caller/voice');
-  }, [setIsListening, router]);
-
-  // Capture spoken transcript and immediately redirect to Voice AI
-  const handleTranscriptUpdate = React.useCallback(
-    (liveText: string) => {
-      if (isRedirectingRef.current) return;
-      const clean = sanitizeTranscript(liveText) || liveText.trim();
-      if (clean && clean.length > 0) {
-        isRedirectingRef.current = true;
-        setSpeechTranscript(clean);
-        setIsListening(true);
-        stopListeningRef.current();
-        router.push('/caller/voice');
-      }
-    },
-    [setSpeechTranscript, setIsListening, router]
-  );
-
-  const {
-    isListening: isMicActive,
-    audioLevel,
-    startListening,
-    stopListening,
-    requestMicPermission,
-  } = useLiveSpeech(handleTranscriptUpdate, handleSpeechStart);
-
-  stopListeningRef.current = stopListening;
-
-  // When listening on home, if sound is detected (audioLevel >= 20), redirect to Voice AI directly!
-  React.useEffect(() => {
-    if (isMicActive && audioLevel >= 20 && !isRedirectingRef.current) {
-      isRedirectingRef.current = true;
-      setIsListening(true);
-      stopListening();
-      router.push('/caller/voice');
-    }
-  }, [audioLevel, isMicActive, setIsListening, router]);
-
-  // If mic permission was already granted, auto-start listening on home
-  React.useEffect(() => {
-    if (typeof window !== 'undefined' && (navigator as any)?.permissions?.query) {
-      (navigator as any).permissions
-        .query({ name: 'microphone' })
-        .then((result: any) => {
-          if (result.state === 'granted') {
-            setIsListening(true);
-            startListening();
-          }
-        })
-        .catch(() => {});
-    }
   }, []);
 
   const handleSelectLanguage = (langName: string) => {
     setSelectedLanguage(langName);
     setShowLangModal(false);
-    AIService.speakGreeting(undefined, langName);
   };
 
   const handleStartVoice = () => {
     resetIncident();
     setIsListening(true);
-    stopListening();
     router.push('/caller/voice');
-  };
-
-  const handleToggleListeningMode = async () => {
-    if (isMicActive) {
-      stopListening();
-      setIsListening(false);
-    } else {
-      const granted = await requestMicPermission();
-      if (granted) {
-        setIsListening(true);
-        startListening();
-      }
-    }
   };
 
   return (
@@ -188,25 +98,25 @@ export default function CallerHome() {
           <ConnectionStatus status="LIVE" />
         </View>
 
-        {/* AI Listening Mode Toggle Button & Status */}
+        {/* AI Voice Assistant Launch Button */}
         <Pressable
-          onPress={handleToggleListeningMode}
+          onPress={handleStartVoice}
           style={[
             styles.listeningBadgeBtn,
-            isMicActive ? styles.listeningActiveBadge : styles.listeningInactiveBadge,
+            styles.listeningActiveBadge,
           ]}
         >
-          <View style={styles.pulseDot} />
+          <Mic size={15} color="#38BDF8" />
           <Text style={styles.listeningBadgeText}>
-            {isMicActive ? 'AI LISTENING MODE: ACTIVE' : 'TAP TO START AI LISTENING MODE'}
+            TAP TO TALK WITH AI VOICE ASSISTANT
           </Text>
-          <Sparkles size={14} color={isMicActive ? '#38BDF8' : '#94A3B8'} />
+          <Sparkles size={14} color="#38BDF8" />
         </Pressable>
 
         {/* Central Animated Voice Orb with Moving Wave */}
         <View style={styles.orbSection}>
           <AnimatedVoiceOrb
-            onPress={() => handleStartVoice()}
+            onPress={handleStartVoice}
             size={140}
           />
           <Text style={styles.orbSubtext}>Tap circle or button to speak dynamically</Text>
