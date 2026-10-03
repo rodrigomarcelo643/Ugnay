@@ -48,6 +48,7 @@ export function useLiveSpeech(
   const recordedChunksRef = useRef<Blob[]>([]);
   const isWhisperTranscribingRef = useRef<boolean>(false);
   const hasSpokenRecentlyRef = useRef<boolean>(false);
+  const speechEnergyDetectedRef = useRef<boolean>(false);
   const silenceFlushTimerRef = useRef<any>(null);
   const nativeRecordingRef = useRef<any>(null);
   const restartTimeoutRef = useRef<any>(null);
@@ -176,8 +177,12 @@ export function useLiveSpeech(
         mediaStreamRef.current = stream;
       }
 
-      // Background MediaRecorder for Whisper AI transcription
-      if (typeof window !== 'undefined' && (window as any).MediaRecorder) {
+      const hasNativeSpeechRec =
+        typeof window !== 'undefined' &&
+        Boolean((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
+
+      // Background MediaRecorder for Whisper AI transcription ONLY when native SpeechRecognition is unavailable
+      if (!hasNativeSpeechRec && typeof window !== 'undefined' && (window as any).MediaRecorder) {
         try {
           const MediaRec = (window as any).MediaRecorder;
           let mime = '';
@@ -200,18 +205,19 @@ export function useLiveSpeech(
           };
 
           recorder.onstop = async () => {
-            if (recordedChunksRef.current.length > 0 && !isWhisperTranscribingRef.current) {
+            const chunks = recordedChunksRef.current;
+            recordedChunksRef.current = [];
+            const hadVoice = speechEnergyDetectedRef.current;
+            speechEnergyDetectedRef.current = false;
+
+            // Only transcribe if actual voice energy (>20%) was observed to avoid silence hallucinations
+            if (chunks.length > 0 && hadVoice && !isWhisperTranscribingRef.current) {
               const actualMime = recorder.mimeType || 'audio/webm';
-              const audioBlob = new Blob(recordedChunksRef.current, { type: actualMime });
-              recordedChunksRef.current = [];
-              // Require at least ~1.5s of real audio content (size > 6000) to avoid background click hallucinations
-              if (audioBlob.size > 6000) {
+              const audioBlob = new Blob(chunks, { type: actualMime });
+              if (audioBlob.size > 14000) {
                 isWhisperTranscribingRef.current = true;
                 try {
-                  const whisperText = await transcribeWithOpenAIWhisper(audioBlob);
-                  if (whisperText && onTranscriptUpdateRef.current) {
-                    onTranscriptUpdateRef.current(whisperText);
-                  }
+                  await transcribeWithOpenAIWhisper(audioBlob);
                 } finally {
                   isWhisperTranscribingRef.current = false;
                 }
@@ -256,7 +262,9 @@ export function useLiveSpeech(
         const normalized = Math.min(100, Math.round((avg / 128) * 100));
         setAudioLevel(normalized);
 
-        if (normalized > 12) {
+        // Require genuine voice energy (> 20%) to trigger speech detection
+        if (normalized > 20) {
+          speechEnergyDetectedRef.current = true;
           hasSpokenRecentlyRef.current = true;
           if (silenceFlushTimerRef.current) {
             clearTimeout(silenceFlushTimerRef.current);
@@ -265,7 +273,7 @@ export function useLiveSpeech(
           if (onSpeechStartRef.current) {
             onSpeechStartRef.current();
           }
-        } else if (hasSpokenRecentlyRef.current && normalized < 8) {
+        } else if (hasSpokenRecentlyRef.current && normalized < 10) {
           // User paused speaking: flush recorded audio chunk to Whisper
           if (!silenceFlushTimerRef.current) {
             silenceFlushTimerRef.current = setTimeout(() => {
@@ -438,15 +446,18 @@ export function useLiveSpeech(
 
             // Propagate interim live speech to interim display only
             if (currentInterim.trim()) {
-              if (onSpeechStartRef.current) {
-                onSpeechStartRef.current();
+              const cleanInterim = sanitizeTranscript(currentInterim);
+              if (cleanInterim) {
+                if (onSpeechStartRef.current) {
+                  onSpeechStartRef.current();
+                }
+                setInterimTranscript(cleanInterim);
               }
-              setInterimTranscript(currentInterim.trim());
             }
 
             // Propagate finalized sentence
             if (currentFinal.trim()) {
-              const cleaned = sanitizeTranscript(currentFinal) || currentFinal.trim();
+              const cleaned = sanitizeTranscript(currentFinal);
               if (cleaned) {
                 setTranscript((prev) => (prev ? `${prev} ${cleaned}` : cleaned));
                 setInterimTranscript('');

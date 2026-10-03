@@ -38,19 +38,8 @@ export default function CallerVoice() {
 
   const isBusyOnCall = Boolean(activeIncident && activeIncident.id && activeIncident.status === 'LIVE');
 
-  const getInitialComfort = (lang: string) => {
-    if (lang?.includes('Bisaya') || lang?.includes('Cebuano')) {
-      return 'Ako ang imong UGNAY AI gabay. Kalma lang ug ginhawa og lawom. Isulti unsay nahitabo ug asa imong lokasyon.';
-    }
-    if (lang?.includes('Tagalog') || lang?.includes('Filipino')) {
-      return 'Ako ang iyong UGNAY AI gabay. Huminahon po at huminga nang malalim. Sabihin kung ano ang nangyari at ang inyong lokasyon.';
-    }
-    return 'I am your UGNAY AI guide. Take a slow, deep breath. Tell me what is happening and your location.';
-  };
-
   // AI Behavior Observation & Emotional Comfort State
   const [detectedMood, setDetectedMood] = useState<'CALM' | 'PANICKED' | 'LISTENING'>('LISTENING');
-  const [comfortText, setComfortText] = useState<string>(() => getInitialComfort(selectedLanguage));
   const [understoodSituation, setUnderstoodSituation] = useState<string>('');
   const [autoDispatchCountdown, setAutoDispatchCountdown] = useState<number | null>(null);
 
@@ -66,7 +55,7 @@ export default function CallerVoice() {
       stopListeningRef.current();
       setIsListening(false);
 
-      const clean = sanitizeTranscript(finalSpeech) || finalSpeech.trim() || 'Emergency reported via voice interface';
+      const clean = sanitizeTranscript(finalSpeech) || 'Emergency reported via voice interface';
       setSpeechTranscript(clean);
 
       // Provide verbal emotional support and guidance as queuing starts
@@ -99,14 +88,6 @@ export default function CallerVoice() {
         setAutoDispatchCountdown(null);
         setUnderstoodSituation('');
         setDetectedMood('LISTENING');
-
-        const promptDetail =
-          selectedLanguage.includes('Tagalog') || selectedLanguage.includes('Filipino')
-            ? 'Nakikinig ako. Pakisabi po kung anong emergency ang nangyayari (sunog, baha, aksidente, o kailangan ng pulis)?'
-            : selectedLanguage.includes('Bisaya') || selectedLanguage.includes('Cebuano')
-            ? 'Paminaw ko nimo. Isulti palihug kon unsay emergency (sunog, baha, pasyente, o pulis)?'
-            : 'Listening... Please describe the emergency: is it fire, flood, medical, or police?';
-        setComfortText(promptDetail);
         return;
       }
 
@@ -121,16 +102,9 @@ export default function CallerVoice() {
             : selectedLanguage.includes('Bisaya') || selectedLanguage.includes('Cebuano')
             ? `Kalma lang palihug, ayaw kalisang. Giproseso na ang responde sa ${evaluation.categoryLabel}.`
             : `Stay calm, take a deep breath. Coordinating ${evaluation.categoryLabel} rescue units for you now.`;
-        setComfortText(comfort);
+        AIService.speakGreeting(comfort, selectedLanguage);
       } else {
         setDetectedMood('CALM');
-        const understood =
-          selectedLanguage.includes('Tagalog') || selectedLanguage.includes('Filipino')
-            ? `Naiintindihan ko ang iyong emergency (${evaluation.categoryLabel}). Inihahanda ang dispatch.`
-            : selectedLanguage.includes('Bisaya') || selectedLanguage.includes('Cebuano')
-            ? `Nasabtan nako ang imong report (${evaluation.categoryLabel}). Giproseso na ang emergency dispatch.`
-            : `I understand your report clearly (${evaluation.categoryLabel}). Processing emergency dispatch details now.`;
-        setComfortText(understood);
       }
 
       // Clear any prior timer before starting silence detection
@@ -160,7 +134,7 @@ export default function CallerVoice() {
   const handleTranscriptUpdate = useCallback(
     (liveText: string) => {
       if (isBusyOnCall) return;
-      const cleanText = sanitizeTranscript(liveText) || liveText.trim();
+      const cleanText = sanitizeTranscript(liveText);
       if (cleanText) {
         setSpeechTranscript(cleanText);
         evaluateUserBehavior(cleanText);
@@ -168,6 +142,11 @@ export default function CallerVoice() {
     },
     [setSpeechTranscript, evaluateUserBehavior, isBusyOnCall]
   );
+
+  const handleSpeechStart = useCallback(() => {
+    // When caller starts talking, immediately stop AI speech so they aren't talking over each other
+    AIService.stopSpeech();
+  }, []);
 
   const {
     isListening: isMicActive,
@@ -178,7 +157,7 @@ export default function CallerVoice() {
     requestMicPermission,
     startListening,
     stopListening,
-  } = useLiveSpeech(handleTranscriptUpdate);
+  } = useLiveSpeech(handleTranscriptUpdate, handleSpeechStart);
 
   stopListeningRef.current = stopListening;
   startListeningRef.current = startListening;
@@ -415,21 +394,6 @@ export default function CallerVoice() {
             </View>
           ) : null}
 
-          {/* AI Comfort Guidance Message */}
-          {comfortText ? (
-            <View className="rounded-2xl bg-sky-500/10 border border-sky-500/30 p-3.5">
-              <Text className="text-xs font-bold text-sky-200 leading-relaxed italic">
-                "{comfortText}"
-              </Text>
-            </View>
-          ) : (
-            <View className="rounded-2xl bg-[#09090B] border border-[#27272A] p-3">
-              <Text className="text-xs font-medium text-zinc-400 leading-relaxed">
-                Speak freely about what happened. The AI observes if you feel frightened or panicked and will de-escalate, soothe, and dispatch automatically.
-              </Text>
-            </View>
-          )}
-
           {/* Hands-Free Auto-Dispatching Countdown Bar */}
           {autoDispatchCountdown !== null && autoDispatchCountdown > 0 ? (
             <View className="flex-row items-center justify-between rounded-xl bg-amber-500/15 border border-amber-500/40 p-3 px-3.5 gap-2 flex-wrap">
@@ -466,16 +430,6 @@ export default function CallerVoice() {
               className="text-sm font-extrabold leading-relaxed italic text-white"
             />
           </View>
-        </View>
-
-        {/* Hands-Free Voice-First Dispatch Notice */}
-        <View className="items-center py-2 px-3 bg-[#18181B]/60 border border-[#27272A] rounded-2xl">
-          <Text className="text-center text-xs text-amber-300/90 font-bold leading-relaxed">
-            🎙️ Voice-First Emergency Dispatch
-          </Text>
-          <Text className="text-center text-[11px] text-zinc-400 font-medium mt-0.5">
-            Speak naturally into your microphone. The AI comforts you and auto-dispatches nearest emergency units.
-          </Text>
         </View>
       </View>
     </ScrollView>

@@ -165,9 +165,52 @@ export function isValidEmergencyDetail(text: string): { isValid: boolean; reason
 export function sanitizeTranscript(text: string): string {
   if (!text || typeof text !== 'string') return '';
 
+  const rawLower = text.toLowerCase().trim();
+  if (rawLower.length < 3) return '';
+
+  // 1. Immediate rejection of degenerate repetition loops & YouTube silence outro artifacts
+  if (
+    /(?:\bmga\b\s*){2,}/i.test(text) ||
+    /(?:sa\s+mga\s*){2,}/i.test(text) ||
+    /\b(\w+)(?:\s+\1\b){2,}/i.test(text) ||
+    /\b(\w+\s+\w+)(?:\s+\1){2,}/i.test(text) ||
+    /pagkakataon\s+ng\s+mga/i.test(text) ||
+    /pag-i-report/i.test(text) ||
+    /pag-i-release/i.test(text) ||
+    /covid(?:-19)?/i.test(text) ||
+    /panonood/i.test(text) ||
+    /amara\.org/i.test(text) ||
+    /subtitles\s+by/i.test(text) ||
+    /pag-i-(?:register|subscribe|comment|share)/i.test(text) ||
+    /mag-(?:i-)?(?:like|subscribe|comment|share)/i.test(text) ||
+    /(?:like\s+at\s+(?:mag-)?share)/i.test(text) ||
+    /(?:like\s+and\s+subscribe)/i.test(text) ||
+    /(?:subscribe\s+to\s+the\s+channel)/i.test(text) ||
+    /youtube\.com/i.test(text)
+  ) {
+    return '';
+  }
+
+  // 2. Frequency check: if any word occurs 3+ times or > 30% of sentence, reject runaway artifact
+  const initialWords = text.trim().split(/\s+/).filter(Boolean);
+  if (initialWords.length >= 3) {
+    const counts: Record<string, number> = {};
+    for (const w of initialWords) {
+      const cleanW = w.toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (cleanW.length >= 2) {
+        counts[cleanW] = (counts[cleanW] || 0) + 1;
+      }
+    }
+    for (const cnt of Object.values(counts)) {
+      if (cnt >= 3 || cnt / initialWords.length > 0.3) {
+        return '';
+      }
+    }
+  }
+
   let cleaned = text;
 
-  // 1. Remove UI / TTS prompt echoes
+  // 3. Remove UI / TTS prompt echoes
   const ttsPatterns = [
     /how can i help\??/gi,
     /please speak your emergency details\.?/gi,
@@ -181,7 +224,7 @@ export function sanitizeTranscript(text: string): string {
     cleaned = cleaned.replace(pattern, ' ');
   }
 
-  // 2. Remove famous STT / Whisper hallucination phrases & silence disclaimers
+  // 4. Remove famous STT / Whisper hallucination phrases & silence disclaimers
   const hallucinationPatterns = [
     /(?:share\s+this\s+video\s+with\s+your\s+friends[^\.\!\n]*[\.\!\n]?)/gi,
     /(?:social\s+media[^\.\!\n]*[\.\!\n]?)/gi,
@@ -213,13 +256,22 @@ export function sanitizeTranscript(text: string): string {
     /(?:watching[\!\.\?]*\s*)+/gi,
     /(?:thank\s+you[\!\.\?]*\s*){2,}/gi,
     /(?:дякуємо|перегляд|спасибо|просмотр)[\!\.\?]*\s*/gi,
+    /(?:pag-i-release[^\.\!\n]*)/gi,
+    /(?:pag-i-report\s+ng\s+covid(?:-19)?[^\.\!\n]*)/gi,
+    /(?:covid(?:-19)?\s+sa\s+mga[^\.\!\n]*)/gi,
+    /(?:covid(?:-19)?[^\.\!\n]*)/gi,
+    /(?:sa\s+mga\s+){2,}/gi,
   ];
 
   for (const pattern of hallucinationPatterns) {
     cleaned = cleaned.replace(pattern, ' ');
   }
 
-  // 3. Remove consecutive duplicate sentences cleanly
+  // 3. Remove word and phrase repetition loops (e.g. "mga mga mga mga..." -> "mga")
+  cleaned = cleaned.replace(/\b(\w+)(?:\s+\1\b){2,}/gi, '$1');
+  cleaned = cleaned.replace(/(\b\w+\s+\w+\b)(?:\s+\1){2,}/gi, '$1');
+
+  // 4. Remove consecutive duplicate sentences cleanly
   const sentences = cleaned.split(/(?<=[.!?])\s+/);
   const deduplicatedSentences: string[] = [];
   for (const s of sentences) {
@@ -234,15 +286,30 @@ export function sanitizeTranscript(text: string): string {
   }
   cleaned = deduplicatedSentences.join(' ');
 
-  // 4. Clean up whitespace
+  // 5. Clean up whitespace
   cleaned = cleaned.replace(/\s+/g, ' ').trim();
 
-  // 5. If remnant phrase is pure hallucination remnant or stray noise, clear it
-  if (/^(thank you|thanks|bye|bye bye|subtitles|watching|yellow)[\.\!\?]*$/i.test(cleaned)) {
+  // 6. Degenerate repetition loop detector (e.g., audio glitch causing runaway repeated words)
+  const words = cleaned.split(/\s+/).filter(Boolean);
+  if (words.length >= 5) {
+    const freq: Record<string, number> = {};
+    for (const w of words) {
+      const lowerW = w.toLowerCase();
+      freq[lowerW] = (freq[lowerW] || 0) + 1;
+    }
+    const maxCount = Math.max(...Object.values(freq));
+    if (maxCount / words.length > 0.35) {
+      // Degenerate loop artifact
+      return '';
+    }
+  }
+
+  // 7. If remnant phrase is pure hallucination remnant or stray noise, clear it
+  if (/^(thank you|thanks|bye|bye bye|subtitles|watching|yellow|mga|sa mga)[\.\!\?]*$/i.test(cleaned)) {
     return '';
   }
 
-  // 6. If the remaining text contains no Latin letters or is just punctuation, clear it
+  // 8. If the remaining text contains no Latin letters or is just punctuation, clear it
   if (!/[a-zA-Z]/.test(cleaned)) {
     return '';
   }

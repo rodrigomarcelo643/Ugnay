@@ -44,6 +44,9 @@ export const LiveCallTranscript: React.FC<LiveCallTranscriptProps> = ({
   // Trigger conversational response from the other party if on single device
   const triggerCounterpartResponse = useCallback(
     (promptText: string, originatingRole: 'CALLER' | 'RESPONDER') => {
+      const sanitizedPrompt = sanitizeTranscript(promptText);
+      if (!sanitizedPrompt || sanitizedPrompt.length < 4) return;
+
       if (autoReplyTimerRef.current) {
         clearTimeout(autoReplyTimerRef.current);
       }
@@ -286,17 +289,21 @@ export const LiveCallTranscript: React.FC<LiveCallTranscriptProps> = ({
       </View>
 
       {/* Interim / Spoken Speech Banner */}
-      {(interimTranscript || liveSpokenText) ? (
-        <View style={styles.interimBox}>
-          <Text style={styles.interimLabel}>HEARING YOUR LIVE SPEECH:</Text>
-          <TypewriterText
-            key={interimTranscript || liveSpokenText}
-            text={`"${interimTranscript || liveSpokenText}"`}
-            speed={25}
-            className="text-xs font-bold text-sky-300 italic"
-          />
-        </View>
-      ) : null}
+      {(() => {
+        const displayText = sanitizeTranscript(interimTranscript || liveSpokenText);
+        if (!displayText) return null;
+        return (
+          <View style={styles.interimBox}>
+            <Text style={styles.interimLabel}>HEARING YOUR LIVE SPEECH:</Text>
+            <TypewriterText
+              key={displayText}
+              text={`"${displayText}"`}
+              speed={25}
+              className="text-xs font-bold text-sky-300 italic"
+            />
+          </View>
+        );
+      })()}
 
       {/* Categorized Transcript Log Container */}
       <View style={styles.transcriptBox}>
