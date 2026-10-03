@@ -198,6 +198,9 @@ export function sanitizeTranscript(text: string): string {
     /(?:emergency\s+response\s+speech\s+input[^\.\!\n]*[\.\!\n]?)/gi,
     /(?:northeast\s+asian\s+fisher[^\.\!\n]*[\.\!\n]?)/gi,
     /(?:[\u0E00-\u0E7F]+)/g, // Remove Thai script hallucinations
+    /(?:[\u0400-\u04FF]+)/g, // Remove Cyrillic script hallucinations (e.g., Дякуємо за перегляд)
+    /(?:[\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF]+)/g, // Remove CJK / Hangul hallucinations
+    /(?:[\u0600-\u06FF]+)/g, // Remove Arabic script hallucinations
     /(?:tagalog\s+bisaya\s*)+/gi,
     /(?:silence\.?\s*)+/gi,
     /(?:thank\s+you\s+for\s+watching[\!\.\?]*\s*)+/gi,
@@ -209,6 +212,7 @@ export function sanitizeTranscript(text: string): string {
     /(?:subscribe\s+to\s+the\s+channel[\!\.\?]*\s*)+/gi,
     /(?:watching[\!\.\?]*\s*)+/gi,
     /(?:thank\s+you[\!\.\?]*\s*){2,}/gi,
+    /(?:дякуємо|перегляд|спасибо|просмотр)[\!\.\?]*\s*/gi,
   ];
 
   for (const pattern of hallucinationPatterns) {
@@ -233,8 +237,13 @@ export function sanitizeTranscript(text: string): string {
   // 4. Clean up whitespace
   cleaned = cleaned.replace(/\s+/g, ' ').trim();
 
-  // 5. If remnant phrase is pure hallucination remnant, clear it
-  if (/^(thank you|thanks|bye|bye bye|subtitles|watching)[\.\!\?]*$/i.test(cleaned)) {
+  // 5. If remnant phrase is pure hallucination remnant or stray noise, clear it
+  if (/^(thank you|thanks|bye|bye bye|subtitles|watching|yellow)[\.\!\?]*$/i.test(cleaned)) {
+    return '';
+  }
+
+  // 6. If the remaining text contains no Latin letters or is just punctuation, clear it
+  if (!/[a-zA-Z]/.test(cleaned)) {
     return '';
   }
 
@@ -507,12 +516,118 @@ export const AIService = {
       };
     }
 
+    // 5. IMMEDIATE DISTRESS / CRY FOR HELP (Tabang, Tulong, Saklolo, Rescue)
+    const distressKeywords = [
+      'tabang', 'tabangi', 'tabanga', 'tulong', 'tulungan', 'saklolo', 'help', 'rescue',
+      'disgrasya', 'nadisgrasya', 'emergency', 'nasamdan', 'samdan'
+    ];
+    if (distressKeywords.some((k) => raw.includes(k))) {
+      return {
+        isMatch: true,
+        incidentType: 'GENERAL',
+        responderType: 'EMS_AMBULANCE',
+        categoryLabel: 'Emergency Distress Call (DRRMO / Rescue)',
+        tags: ['Immediate Distress', 'DRRMO Dispatch', 'Emergency Rescue'],
+      };
+    }
+
     return {
       isMatch: false,
       incidentType: 'UNMATCHED',
       responderType: 'NONE',
       categoryLabel: 'Listening... Please state your emergency',
       tags: [],
+    };
+  },
+
+  /**
+   * Fast emergency verification & panic assessment via OpenAI GPT-4o-mini.
+   * Dispatches ONLY if it is an actual emergency and categorizes properly.
+   * Uses OpenAI to detect real life-threatening panic and escalate routing priority.
+   */
+  async evaluateEmergencyAndPanic(speechText: string): Promise<{
+    is_emergency: boolean;
+    category: IncidentType | 'UNMATCHED';
+    categoryLabel: string;
+    is_panic: boolean;
+    urgency: Priority;
+    summary: string;
+  }> {
+    const sanitized = sanitizeTranscript(speechText);
+    if (!sanitized || sanitized.length < 3) {
+      return {
+        is_emergency: false,
+        category: 'UNMATCHED',
+        categoryLabel: '',
+        is_panic: false,
+        urgency: 'LOW',
+        summary: '',
+      };
+    }
+
+    const quickMatch = this.matchResponderCategory(sanitized);
+
+    try {
+      if (OPENAI_KEY && OPENAI_KEY.startsWith('sk-')) {
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${OPENAI_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: 'gpt-4o-mini',
+            messages: [
+              {
+                role: 'system',
+                content:
+                  'You are a 911 Philippine emergency triage evaluator. Respond ONLY in valid JSON. Determine if the caller speech describes a REAL life/safety emergency (fire, flood, medical, crime, trauma). Casual greetings, questions, or test phrases are NOT emergencies. Detect TRUE severe panic/distress vs calm reporting.',
+              },
+              {
+                role: 'user',
+                content: `Caller utterance: "${sanitized}"
+Return JSON:
+{
+  "is_emergency": boolean,
+  "category": "FIRE" | "FLOOD" | "MEDICAL" | "SECURITY" | "TYPHOON" | "GENERAL" | "NONE",
+  "category_label": "e.g. Fire Emergency (BFP) / Medical Emergency (EMS)",
+  "is_panic": boolean,
+  "urgency": "LOW" | "MEDIUM" | "HIGH" | "CRITICAL",
+  "summary": "1 sentence brief"
+}`,
+              },
+            ],
+            temperature: 0.1,
+          }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          const parsed = JSON.parse(data.choices[0]?.message?.content?.replace(/```json|```/g, '').trim() || '{}');
+          if (parsed && typeof parsed.is_emergency === 'boolean') {
+            return {
+              is_emergency: parsed.is_emergency,
+              category: parsed.category === 'NONE' ? 'UNMATCHED' : (parsed.category as IncidentType),
+              categoryLabel: parsed.category_label || quickMatch.categoryLabel,
+              is_panic: Boolean(parsed.is_panic),
+              urgency: (parsed.urgency as Priority) || (parsed.is_panic ? 'CRITICAL' : 'HIGH'),
+              summary: parsed.summary || sanitized,
+            };
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('OpenAI evaluation fallback notice:', e);
+    }
+
+    // High reliability fallback: ONLY mark emergency if matched to legitimate emergency keywords
+    return {
+      is_emergency: quickMatch.isMatch,
+      category: quickMatch.incidentType,
+      categoryLabel: quickMatch.categoryLabel,
+      is_panic: /(?:mamatay|mamamatay|saklolo|papatayin|dios ko|diyos ko|tulungan nyo kami)/i.test(sanitized),
+      urgency: quickMatch.incidentType === 'MEDICAL' || quickMatch.incidentType === 'FIRE' ? 'HIGH' : 'MEDIUM',
+      summary: sanitized,
     };
   },
 
@@ -953,7 +1068,27 @@ Return ONLY a valid raw JSON object with NO markdown formatting matching this JS
     langOverride?: string
   ): Promise<void> {
     const guidance = this.getCalmingEmergencyGuidance(incidentType, userSpeechText, langOverride);
-    const spokenMessage = `${guidance.reassurance} Step 1: ${guidance.steps[0]} Step 2: ${guidance.steps[1]} Help is coming.`;
+    let selectedLang = langOverride;
+    if (!selectedLang && typeof window !== 'undefined') {
+      try {
+        selectedLang =
+          localStorage.getItem('ugnay_selected_language') ||
+          sessionStorage.getItem('ugnay_selected_language') ||
+          'Cebuano / Bisaya';
+      } catch (e) {}
+    }
+    const isBisaya = (selectedLang || '').includes('Cebuano') || (selectedLang || '').includes('Bisaya');
+    const isTagalog = (selectedLang || '').includes('Tagalog') || (selectedLang || '').includes('Filipino');
+
+    let spokenMessage = '';
+    if (isBisaya) {
+      spokenMessage = `${guidance.reassurance} Una: ${guidance.steps[0]} Ikaduha: ${guidance.steps[1]} Padulong na ang rescue unit.`;
+    } else if (isTagalog) {
+      spokenMessage = `${guidance.reassurance} Una: ${guidance.steps[0]} Pangalawa: ${guidance.steps[1]} Paparating na ang rescue unit.`;
+    } else {
+      spokenMessage = `${guidance.reassurance} First: ${guidance.steps[0]} Second: ${guidance.steps[1]} Help is coming.`;
+    }
+
     return this.speakGreeting(spokenMessage, langOverride);
   },
 
@@ -1574,6 +1709,340 @@ Return ONLY a valid raw JSON object with NO markdown formatting matching this JS
         ? 'Huminga nang malalim. Umupo sa sahig at isandal ang likod sa pader. Nandito ako para sa iyo.'
         : 'Take a deep breath and lean against a wall. I am here with you.',
     };
+  },
+
+  /**
+   * Empathetically interprets caller speech while queuing.
+   * - Stops previous AI voice immediately when caller speaks (barge-in).
+   * - If simple affirmation (e.g. "opo", "sige", "okay"): gently acknowledges without repeating explanations.
+   * - If caller needs assistance / expresses pain, panic, or gives an update: responds with genuine human empathy and 1 practical instruction,
+   *   and extracts facts for the responders.
+   */
+  async interpretCallerUtterance(
+    speechText: string,
+    incidentContext: {
+      type?: string;
+      departmentName?: string;
+      location?: string;
+      lastAiMessage?: string;
+    } = {},
+    langOverride?: string
+  ): Promise<{
+    isAffirmationOnly: boolean;
+    needsAssistance: boolean;
+    extractedUpdate?: string;
+    spokenResponse: string;
+  }> {
+    const sanitized = sanitizeTranscript(speechText);
+    if (!sanitized || sanitized.length < 2) {
+      return {
+        isAffirmationOnly: false,
+        needsAssistance: false,
+        spokenResponse: '',
+      };
+    }
+
+    let selectedLang = langOverride;
+    if (!selectedLang && typeof window !== 'undefined') {
+      try {
+        selectedLang =
+          localStorage.getItem('ugnay_selected_language') ||
+          sessionStorage.getItem('ugnay_selected_language') ||
+          'Cebuano / Bisaya';
+      } catch (e) {}
+    }
+    const isBisaya = (selectedLang || '').includes('Cebuano') || (selectedLang || '').includes('Bisaya');
+    const isTagalog = (selectedLang || '').includes('Tagalog') || (selectedLang || '').includes('Filipino');
+    const targetLanguage = isBisaya ? 'Cebuano / Bisaya' : isTagalog ? 'Tagalog / Filipino' : 'English';
+
+    // Quick regex check for pure affirmations
+    const rawLower = sanitized.toLowerCase().trim();
+    const affirmationRegex = /^(opo|sige|sige po|oo|okay|ok|uu|nandito ako|nandito lang ako|salamat|thanks|yes|yes po|alright|copy|noted|sige sige|oo nga)[\.\!\?]*$/i;
+    const isSimpleAffirmation = affirmationRegex.test(rawLower);
+
+    if (isSimpleAffirmation) {
+      const affirmationResponses = isBisaya
+        ? [
+            'Nia ra ko uban nimo. Padayon ang pag-monitor sa rescue.',
+            'Sige, paminaw lang sa akong tingog. Nia ra ko.',
+            'Kasabot ko. Pabilin lang sa luwas nga pwesto.',
+          ]
+        : isTagalog
+        ? [
+            'Nandito lang ako kasama mo. Patuloy ang pag-monitor sa rescue unit.',
+            'Sige, makinig ka lang sa akin. Huwag kang mag-alala.',
+            'Naiintindihan ko. Manatili ka lang sa ligtas na pwesto.',
+          ]
+        : [
+            'I am right here with you. Responders are actively being routed.',
+            'Stay steady. I am staying on the line with you.',
+            'Understood. Remain safe where you are.',
+          ];
+      const chosen = affirmationResponses[Math.floor(Math.random() * affirmationResponses.length)];
+      return {
+        isAffirmationOnly: true,
+        needsAssistance: false,
+        spokenResponse: chosen,
+      };
+    }
+
+    // Call OpenAI for deep human empathy & triage if available
+    try {
+      if (OPENAI_KEY && OPENAI_KEY.startsWith('sk-')) {
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${OPENAI_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: 'gpt-4o-mini',
+            messages: [
+              {
+                role: 'system',
+                content: `You are an experienced, deeply empathetic 911 emergency voice dispatcher in the Philippines (UGNAY AI).
+The caller is currently on hold waiting for emergency dispatch (${incidentContext.departmentName || 'Rescue Unit'} for ${incidentContext.type || 'Emergency'}).
+The caller just spoke into the microphone while waiting.
+Language MUST strictly be in: ${targetLanguage}.
+
+Instructions:
+1. is_affirmation_only: true if the caller is only agreeing, saying okay, acknowledging, or saying short passive phrases (e.g. "opo", "sige", "okay", "oo", "nandito lang ako").
+2. needs_assistance: true if the caller is in pain, terrified, asking a question, reporting worsening danger, or giving incident updates.
+3. extracted_update: if the caller mentions new relevant facts (e.g. "masakit ang paa ko", "may 2 bata kasama", "pumasok na ang tubig", "patay ang ilaw"), extract a concise English bullet note for the dispatchers. Otherwise return empty string.
+4. spoken_response: 
+   - If is_affirmation_only: A very brief (1 sentence), gentle, calming reassurance (e.g. "Nandito lang ako kasama mo...").
+   - If needs_assistance: Respond with genuine, heartfelt human empathy and warmth, like a caring responder holding their hand. Acknowledge what they felt/said, give EXACTLY ONE simple practical grounding action, and reassure them that help is moving. Keep it strictly to 1-2 spoken sentences. Do NOT give long robotic checklists.
+
+Respond ONLY in valid JSON:
+{
+  "is_affirmation_only": boolean,
+  "needs_assistance": boolean,
+  "extracted_update": string,
+  "spoken_response": string
+}`,
+              },
+              {
+                role: 'user',
+                content: `Caller utterance: "${sanitized}"
+Context: Incident Type: ${incidentContext.type || 'EMERGENCY'}, Station: ${incidentContext.departmentName || 'Nearest Unit'}, Location: ${incidentContext.location || 'Reported Pin'}`,
+              },
+            ],
+            temperature: 0.2,
+          }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          const parsed = JSON.parse(
+            data.choices[0]?.message?.content?.replace(/```json|```/g, '').trim() || '{}'
+          );
+          if (parsed && typeof parsed.spoken_response === 'string') {
+            return {
+              isAffirmationOnly: Boolean(parsed.is_affirmation_only),
+              needsAssistance: Boolean(parsed.needs_assistance),
+              extractedUpdate: parsed.extracted_update || undefined,
+              spokenResponse: parsed.spoken_response,
+            };
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('OpenAI caller utterance interpretation error:', e);
+    }
+
+    // High quality offline fallback
+    const hasDistress = /(sakit|aray|agay|masakit|dugo|apoy|baha|patay|tulong|tabang|help|takot|hadlok|dali|nahihilo)/i.test(sanitized);
+    let fallbackSpeech = '';
+    if (isBisaya) {
+      fallbackSpeech = hasDistress
+        ? 'Dungog tika, ayaw kabalaka. Ginhawa og lawom ug pabilin sa luwas nga pwesto. Padulong na ang rescue unit.'
+        : 'Nia ra ko sa linya uban nimo. Padayon ang pag-monitor sa pinakaduol nga estasyon.';
+    } else if (isTagalog) {
+      fallbackSpeech = hasDistress
+        ? 'Naririnig kita, huwag kang matakot. Huminga nang dahan-dahan at manatili sa ligtas na pwesto. Paparating na ang rescue.'
+        : 'Nandito lang ako kasama mo sa linya. Patuloy na minomonitor ang pinakamalapit na rescue unit.';
+    } else {
+      fallbackSpeech = hasDistress
+        ? 'I hear you, please stay calm and take a deep breath. Focus on your safety while the rescue unit is en route.'
+        : 'I am right here on the line with you. The emergency rescue unit is actively being routed.';
+    }
+
+    return {
+      isAffirmationOnly: !hasDistress,
+      needsAssistance: hasDistress,
+      extractedUpdate: hasDistress ? sanitized : undefined,
+      spokenResponse: fallbackSpeech,
+    };
+  },
+
+  /**
+   * Generates a realistic live emergency response dialogue from the Responder Unit.
+   * Grounded in incident context, department type, and caller speech.
+   */
+  async generateResponderReply(
+    callerSpeech: string,
+    incidentContext: {
+      type?: string;
+      departmentName?: string;
+      location?: string;
+      responderName?: string;
+    } = {},
+    langOverride?: string
+  ): Promise<string> {
+    const sanitized = sanitizeTranscript(callerSpeech);
+    let selectedLang = langOverride;
+    if (!selectedLang && typeof window !== 'undefined') {
+      try {
+        selectedLang =
+          localStorage.getItem('ugnay_selected_language') ||
+          sessionStorage.getItem('ugnay_selected_language') ||
+          'Cebuano / Bisaya';
+      } catch (e) {}
+    }
+    const isBisaya = (selectedLang || '').includes('Cebuano') || (selectedLang || '').includes('Bisaya');
+    const isTagalog = (selectedLang || '').includes('Tagalog') || (selectedLang || '').includes('Filipino');
+    const targetLanguage = isBisaya ? 'Cebuano / Bisaya' : isTagalog ? 'Tagalog / Filipino' : 'English';
+
+    try {
+      if (OPENAI_KEY && OPENAI_KEY.startsWith('sk-')) {
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${OPENAI_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: 'gpt-4o-mini',
+            messages: [
+              {
+                role: 'system',
+                content: `You are an official Philippine emergency responder (${incidentContext.departmentName || 'Emergency Response Unit'}) on a live two-way voice call with a citizen caller.
+The citizen caller just spoke to you: "${sanitized}".
+Respond as the responder in 1-2 realistic, concise, direct sentences in ${targetLanguage}.
+Acknowledge the caller, give direct professional safety instructions or status of arrival, and sound authentic to Philippine 911 dispatch responders. Do NOT use bullet points or markdown.`,
+              },
+              {
+                role: 'user',
+                content: `Caller says: "${sanitized}"
+Incident: ${incidentContext.type || 'Emergency'} at ${incidentContext.location || 'Reported Location'}.`,
+              },
+            ],
+            temperature: 0.3,
+            max_tokens: 100,
+          }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          const reply = data.choices[0]?.message?.content?.trim();
+          if (reply) return reply;
+        }
+      }
+    } catch (e) {
+      console.warn('Responder reply generation notice:', e);
+    }
+
+    // High quality offline fallback responses
+    const lower = sanitized.toLowerCase();
+    if (isBisaya) {
+      if (lower.includes('dugo') || lower.includes('samad') || lower.includes('sakit')) {
+        return 'Nadawat namo! Padulong na ang ambulansya. Diini og tarong ang samad gamit ang limpyo nga panapton samtang nagbiyahe among team.';
+      }
+      if (lower.includes('apoy') || lower.includes('sunog') || lower.includes('aso')) {
+        return 'Naka-alerto na ang bumbero sa inyong sektor. Pabiling ubos sa aso ug paggawas dayon sa luwas nga dapit.';
+      }
+      if (lower.includes('asa na') || lower.includes('dugay') || lower.includes('kanus-a')) {
+        return 'Nasa dalan na ang atong rescue unit duol sa inyong lokasyon. Pabilin lang sa luwas nga lugar.';
+      }
+      return 'Nadawat ang report. Padulong na ang atong mga responders sa inyong pwesto. Pabiling kalmado ug bantayi ang palibot.';
+    } else if (isTagalog) {
+      if (lower.includes('dugo') || lower.includes('sugat') || lower.includes('masakit') || lower.includes('sakit')) {
+        return 'Copy that! Paparating na ang ating medics. Diinan ang sugat ng malinis na tela nang tuloy-tuloy at panatilihing nakapahinga ang pasyente.';
+      }
+      if (lower.includes('apoy') || lower.includes('sunog') || lower.includes('usok')) {
+        return 'Naka-dispatch na ang BFP fire truck sa inyong lokasyon. Gumapang sa ilalim ng usok at lumabas agad sa ligtas na lugar.';
+      }
+      if (lower.includes('nasaan') || lower.includes('tagal') || lower.includes('kelan')) {
+        return 'Nasa bisinidad na po ang ating rescue unit, mga 1 hanggang 2 minuto na lang. Manatili sa ligtas na pwesto.';
+      }
+      return 'Kumpirmado po ang inyong report. Paparating na ang ating responder team sa inyong lokasyon. Manatili sa ligtas na lugar.';
+    } else {
+      return 'Copy that! Emergency response units are actively en route to your coordinates. Please stay safe and keep this line open.';
+    }
+  },
+
+  /**
+   * Generates a realistic citizen caller response to a responder's question or instruction.
+   */
+  async generateCallerReply(
+    responderSpeech: string,
+    incidentContext: {
+      type?: string;
+      situation?: string;
+      location?: string;
+      callerName?: string;
+    } = {},
+    langOverride?: string
+  ): Promise<string> {
+    const sanitized = sanitizeTranscript(responderSpeech);
+    let selectedLang = langOverride;
+    if (!selectedLang && typeof window !== 'undefined') {
+      try {
+        selectedLang =
+          localStorage.getItem('ugnay_selected_language') ||
+          sessionStorage.getItem('ugnay_selected_language') ||
+          'Cebuano / Bisaya';
+      } catch (e) {}
+    }
+    const isBisaya = (selectedLang || '').includes('Cebuano') || (selectedLang || '').includes('Bisaya');
+    const isTagalog = (selectedLang || '').includes('Tagalog') || (selectedLang || '').includes('Filipino');
+    const targetLanguage = isBisaya ? 'Cebuano / Bisaya' : isTagalog ? 'Tagalog / Filipino' : 'English';
+
+    try {
+      if (OPENAI_KEY && OPENAI_KEY.startsWith('sk-')) {
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${OPENAI_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: 'gpt-4o-mini',
+            messages: [
+              {
+                role: 'system',
+                content: `You are a citizen caller on a live emergency phone call with an emergency responder in the Philippines.
+The responder just told you: "${sanitized}".
+Respond realistically in 1 short sentence in ${targetLanguage} confirming their instruction or giving a brief update.`,
+              },
+              {
+                role: 'user',
+                content: `Responder says: "${sanitized}"
+Emergency: ${incidentContext.type || 'Emergency'}.`,
+              },
+            ],
+            temperature: 0.3,
+            max_tokens: 60,
+          }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          const reply = data.choices[0]?.message?.content?.trim();
+          if (reply) return reply;
+        }
+      }
+    } catch (e) {
+      console.warn('Caller reply generation notice:', e);
+    }
+
+    if (isBisaya) {
+      return 'Opo, salamat kaayo. Nia ra mi nagpaabot sa inyong pag-abot.';
+    } else if (isTagalog) {
+      return 'Opo officer, naiintindihan po namin. Nandito lang kami naghihintay.';
+    } else {
+      return 'Understood, thank you. We are staying in place waiting for you.';
+    }
   },
 };
 

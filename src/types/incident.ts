@@ -39,6 +39,7 @@ export interface DepartmentInfo {
 export interface UserProfile {
   id: string;
   name: string;
+  username?: string;
   phone?: string;
   role: UserRole;
   availability: 'AVAILABLE' | 'BUSY' | 'OFFLINE';

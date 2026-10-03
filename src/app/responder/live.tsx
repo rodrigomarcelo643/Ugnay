@@ -301,7 +301,12 @@ export default function ResponderLiveCall() {
           <LiveCallTranscript
             incidentId={activeIncident.id}
             role="RESPONDER"
-            senderName={activeIncident.responder_name || 'Officer Marcelo Santos'}
+            senderName={activeIncident.responder_name || user?.name || 'Officer Marcelo Santos'}
+            otherPartyName={activeIncident.caller_name || 'Citizen Caller'}
+            departmentName={activeIncident.department_name || activeIncident.station_name || user?.department_name || 'Emergency Response Unit'}
+            incidentType={activeIncident.type || 'EMERGENCY'}
+            location={activeIncident.caller_address || activeIncident.location}
+            initialReport={activeIncident.speech_transcript || activeIncident.description || activeIncident.summary}
           />
 
           {/* Real-time AI Updates During Call */}

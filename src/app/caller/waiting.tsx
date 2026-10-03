@@ -24,50 +24,12 @@ import {
   Volume2,
   VolumeX,
   Sparkles,
-  HeartHandshake,
-  CheckCircle2,
   AlertTriangle,
   Route,
-  Wind,
-  Smile,
-  Radio,
   Radar,
   HeartPulse,
-  Activity,
   Brain,
-  Info,
 } from 'lucide-react-native';
-
-const CALMING_TOPICS = [
-  {
-    id: 'breathing',
-    title: 'Box Breathing 4-4-4',
-    hint: 'Breathe with AI guide',
-    icon: Wind,
-    response: 'Simulan natin ang 4-4-4 breathing. Dahan-dahang huminga nang malalim. Huwag mangamba, kasama mo ako sa bawat segundo.',
-  },
-  {
-    id: 'grounding',
-    title: '5-4-3-2-1 Grounding',
-    hint: 'Calm your senses',
-    icon: Smile,
-    response: 'Subukan nating ibsan ang kaba: Sabihin mo sa akin ang 3 bagay na nakikita mo sa iyong paligid ngayon.',
-  },
-  {
-    id: 'safety',
-    title: 'Safe Perimeter Check',
-    hint: 'Confirm safe spot',
-    icon: ShieldAlert,
-    response: 'Tingnan ang iyong paligid. Siguraduhing malayo ka sa babagsaking bagay, usok, o baha habang hinihintay ang responder.',
-  },
-  {
-    id: 'companion',
-    title: 'Stay on the Line',
-    hint: 'AI companion voice',
-    icon: Radio,
-    response: 'Nandito lang ako kasama mo sa linya. Patuloy na minomonitor ang pinakamalapit na rescue unit para sa iyo.',
-  },
-];
 
 export default function CallerWaitingScreen() {
   const router = useRouter();
@@ -114,46 +76,7 @@ export default function CallerWaitingScreen() {
     )
   );
 
-  // Interactive 4-4-4 Box Breathing companion state
-  const [isBreathingGuideActive, setIsBreathingGuideActive] = useState(false);
-  const [breathingPhase, setBreathingPhase] = useState<'INHALE' | 'HOLD' | 'EXHALE'>('INHALE');
-  const [breathingTimer, setBreathingTimer] = useState(4);
-
-  // Initial Calming Guidance state
-  const incidentCategory = activeIncident?.type || 'GENERAL';
-  const [guidance, setGuidance] = useState(() =>
-    AIService.getCalmingEmergencyGuidance(incidentCategory, undefined, selectedLanguage)
-  );
-
-  // Box Breathing cycle countdown timer
-  useEffect(() => {
-    if (!isBreathingGuideActive) return;
-
-    const interval = setInterval(() => {
-      setBreathingTimer((prev) => {
-        if (prev <= 1) {
-          setBreathingPhase((currentPhase) => {
-            if (currentPhase === 'INHALE') {
-              AIService.speakGreeting('Hold your breath for 4 seconds...', selectedLanguage);
-              return 'HOLD';
-            }
-            if (currentPhase === 'HOLD') {
-              AIService.speakGreeting('Exhale slowly and release your stress...', selectedLanguage);
-              return 'EXHALE';
-            }
-            AIService.speakGreeting('Inhale deeply through your nose...', selectedLanguage);
-            return 'INHALE';
-          });
-          return 4;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [isBreathingGuideActive, selectedLanguage]);
-
-  // 1. Instant speech start: PAUSE first the AI reader when caller begins speaking
+  // 1. Instant speech start: PAUSE / CUT OFF AI speech immediately when caller starts talking (barge-in)
   const handleSpeechStart = useCallback(() => {
     AIService.stopSpeech();
     setIsAIReaderPaused(true);
@@ -165,9 +88,9 @@ export default function CallerWaitingScreen() {
     }
   }, []);
 
-  // 2. Silence detection: CONTINUE once quiet & deliver SCENARIO-BASED guidance if panicking
+  // 2. Silence detection: Interpret caller utterance with genuine human empathy & voice response
   const handleUserQuiet = useCallback(
-    (text: string) => {
+    async (text: string) => {
       setIsUserSpeaking(false);
       setIsAIReaderPaused(false);
 
@@ -193,32 +116,43 @@ export default function CallerWaitingScreen() {
       );
       setScenarioPanicGuidance(scenarioGuidance);
 
-      // CONTINUE AI READER ONCE QUIET:
-      // If caller is panicking, deliver targeted scenario-based life-saving actions
-      if (
-        scenarioGuidance.isPanicking ||
-        emotionResult.emotion === 'PANICKED' ||
-        emotionResult.distressScore >= 70
-      ) {
-        const spokenPanicGuidance = `${scenarioGuidance.soothingAudioPhrase} ${scenarioGuidance.steps[0]} ${scenarioGuidance.steps[1] || ''}`;
-        AIService.speakGreeting(spokenPanicGuidance, selectedLanguage);
-      } else {
-        // Not panicking: deliver soothing scenario reassurance
-        AIService.speakGreeting(
-          emotionResult.soothingAudioPhrase || scenarioGuidance.reassuranceText,
-          selectedLanguage
-        );
-      }
-
-      // Update emergency protocols checklist
-      const updated = AIService.getCalmingEmergencyGuidance(
-        currentActive?.type || 'GENERAL',
+      // Interpret caller's utterance with genuine human empathy
+      const interpretation = await AIService.interpretCallerUtterance(
         text,
+        {
+          type: currentActive?.type,
+          departmentName: deptName,
+          location: callerAddress,
+        },
         selectedLanguage
       );
-      setGuidance(updated);
+
+      // Speak empathetic response aloud via voice (if user hasn't started speaking again)
+      if (interpretation.spokenResponse && !isUserSpeaking) {
+        AIService.speakGreeting(interpretation.spokenResponse, selectedLanguage);
+      }
+
+      // If caller needs assistance or provided an update, retain and persist to incident known_facts!
+      if (interpretation.extractedUpdate && currentActive?.id) {
+        const cleanUpdate = interpretation.extractedUpdate.trim();
+        const existingFacts = currentActive.known_facts || [];
+        if (!existingFacts.some((f) => f.toLowerCase().includes(cleanUpdate.toLowerCase()))) {
+          const updatedFacts = [...existingFacts, `Voice Update: ${cleanUpdate}`];
+          useIncidentStore.getState().setActiveIncident({ ...currentActive, known_facts: updatedFacts });
+          setAddedVoiceFactsCount((prev) => prev + 1);
+
+          try {
+            const { supabase } = require('@/lib/supabase');
+            supabase
+              .from('incidents')
+              .update({ known_facts: updatedFacts })
+              .eq('id', currentActive.id)
+              .then(() => {});
+          } catch (e) {}
+        }
+      }
     },
-    [selectedLanguage]
+    [selectedLanguage, deptName, callerAddress, isUserSpeaking]
   );
 
   // 3. Live Speech recognition callback: appends telemetries & manages silence debounce
@@ -316,6 +250,9 @@ export default function CallerWaitingScreen() {
   useEffect(() => {
     if (!activeIncident) return;
 
+    // Auto-start listening on mount (hands-free)
+    startListening();
+
     agoraConvoAI.startConvoAIAgent({
       channelName: activeIncident.channel_name || `ugnay_emergency_${activeIncident.id}`,
       appId: process.env.EXPO_PUBLIC_AGORA_APP_ID || '',
@@ -392,12 +329,12 @@ export default function CallerWaitingScreen() {
     };
   }, [activeIncident?.id]);
 
-  // 3. 60-second dispatch timeout countdown
+  // 3. Continuous dispatch timer: Automatically rotates to next nearest station and keeps queuing active
   useEffect(() => {
-    if (isTimedOut || !activeIncident) return;
+    if (!activeIncident) return;
 
     if (timeLeft <= 0) {
-      setIsTimedOut(true);
+      handleReattempt();
       return;
     }
 
@@ -406,35 +343,7 @@ export default function CallerWaitingScreen() {
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [timeLeft, isTimedOut, activeIncident]);
-
-  const handleToggleVoiceCompanion = async () => {
-    if (isMicActive) {
-      stopListening();
-      setIsSpeakingWithAI(false);
-    } else {
-      const granted = await requestMicPermission();
-      if (granted) {
-        startListening();
-        setIsSpeakingWithAI(true);
-        AIService.speakGreeting(
-          'Nandito ako kasama mo. Sabihin mo kung ano ang nararamdaman mo o sitwasyon mo.',
-          selectedLanguage
-        );
-      }
-    }
-  };
-
-  const handleSelectCalmingTopic = (topic: typeof CALMING_TOPICS[0]) => {
-    if (topic.id === 'breathing') {
-      setIsBreathingGuideActive((prev) => !prev);
-      if (!isBreathingGuideActive) {
-        AIService.speakGreeting('Simulan natin ang box breathing exercise. Huminga nang malalim...', selectedLanguage);
-      }
-    } else {
-      AIService.speakGreeting(topic.response, selectedLanguage);
-    }
-  };
+  }, [timeLeft, activeIncident]);
 
   const handleReattempt = () => {
     const prevRejected = activeIncident?.rejected_departments || [];
@@ -738,8 +647,48 @@ export default function CallerWaitingScreen() {
           )}
         </View>
 
-        {/* CALLER VOICE & REAL-TIME EMOTION-BASED BEHAVIOR GUIDANCE CARD */}
-        <View className="w-full gap-4 rounded-3xl bg-[#18181B] border border-sky-500/30 p-4 sm:p-5 shadow-xl">
+        {/* 1. LIVE MAP ROUTING TO NEAREST DEPARTMENT (PROMINENTLY DISPLAYED AT TOP) */}
+        <View className="w-full rounded-3xl bg-[#18181B] border border-[#27272A] overflow-hidden shadow-2xl">
+          <View className="p-3 sm:p-4 px-4 sm:px-5 border-b border-[#27272A] flex-row items-center justify-between bg-[#1F1F23] gap-2 flex-wrap">
+            <View className="flex-row items-center gap-2.5 flex-1 min-w-[170px]">
+              <View className="p-2 rounded-xl bg-sky-500/20 shrink-0">
+                <Route size={15} color="#38BDF8" />
+              </View>
+              <View className="flex-1 min-w-0">
+                <Text className="text-[10px] font-black uppercase tracking-wider text-sky-400" numberOfLines={1}>
+                  LIVE MAP ROUTING • DISPATCH RADAR
+                </Text>
+                <Text className="text-xs sm:text-sm font-black text-white" numberOfLines={1}>
+                  {deptName}
+                </Text>
+              </View>
+            </View>
+            <View className="bg-emerald-500/15 border border-emerald-500/30 px-2.5 py-1 rounded-full flex-row items-center gap-1.5 shrink-0">
+              <View className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              <Text className="text-[9px] font-black text-emerald-400">
+                RADAR PING ACTIVE
+              </Text>
+            </View>
+          </View>
+
+          {/* Render the interactive Leaflet + OpenStreetMap + ORS Route */}
+          <LiveMapView
+            callerLat={callerLat}
+            callerLng={callerLng}
+            callerAddress={callerAddress}
+            responderLat={deptLat}
+            responderLng={deptLng}
+            responderAddress={deptAddress}
+            departmentName={deptName}
+            role="CALLER"
+            mapHeight={250}
+            nearbyDepartments={nearbyDepartments}
+            isPingingRadar={true}
+          />
+        </View>
+
+        {/* 2. HANDS-FREE CALLER VOICE & CALM EMOTION COMPANION (NO TAP BUTTON) */}
+        <View className="w-full gap-3.5 rounded-3xl bg-[#18181B] border border-sky-500/30 p-4 sm:p-5 shadow-xl">
           {/* Card Header with Queue Persistence Pill */}
           <View className="flex-row items-center justify-between border-b border-[#27272A] pb-3 gap-2 flex-wrap">
             <View className="flex-row items-center gap-2.5 shrink-0">
@@ -748,10 +697,10 @@ export default function CallerWaitingScreen() {
               </View>
               <View>
                 <Text className="text-xs font-black text-sky-400 uppercase tracking-wider">
-                  CALLER VOICE & EMOTION GUIDANCE
+                  AI COMPANION & VOICE TELEMETRY
                 </Text>
                 <Text className="text-[10px] text-zinc-400 font-medium">
-                  Real-time Psychological & Behavioral AI Monitor
+                  Hands-Free Live Voice Guidance
                 </Text>
               </View>
             </View>
@@ -762,14 +711,14 @@ export default function CallerWaitingScreen() {
                 <View className="bg-amber-500/20 border border-amber-500/50 px-2.5 py-1 rounded-full flex-row items-center gap-1.5 shrink-0">
                   <VolumeX size={11} color="#FBBF24" />
                   <Text className="text-[9px] font-black text-amber-300 uppercase tracking-wider">
-                    AI PAUSED • LISTENING...
+                    AI LISTENING...
                   </Text>
                 </View>
               ) : (
                 <View className="bg-sky-500/20 border border-sky-500/40 px-2.5 py-1 rounded-full flex-row items-center gap-1.5 shrink-0">
                   <Volume2 size={11} color="#38BDF8" />
                   <Text className="text-[9px] font-black text-sky-300 uppercase tracking-wider">
-                    AI READER READY
+                    AI READY
                   </Text>
                 </View>
               )}
@@ -777,224 +726,79 @@ export default function CallerWaitingScreen() {
               <View className="bg-emerald-500/15 border border-emerald-500/30 px-2.5 py-1 rounded-full flex-row items-center gap-1.5 shrink-0">
                 <View className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                 <Text className="text-[9px] font-black text-emerald-400">
-                  QUEUE ACTIVE • DISPATCHING
+                  QUEUE ACTIVE
                 </Text>
               </View>
             </View>
           </View>
 
-          {/* Interactive Live Mic Trigger */}
-          <Pressable
-            onPress={handleToggleVoiceCompanion}
-            className={`p-4 rounded-2xl border transition-all ${
-              isUserSpeaking
-                ? 'bg-amber-500/15 border-amber-500/60 shadow-lg'
-                : isMicActive
-                ? 'bg-rose-500/15 border-rose-500/50 shadow-lg'
-                : 'bg-[#09090B] border-[#27272A] active:bg-zinc-800'
-            }`}
-          >
-            <View className="flex-row items-center justify-between gap-3">
-              <View className="flex-row items-center gap-3 flex-1 min-w-0">
-                <View
-                  className={`w-12 h-12 rounded-2xl items-center justify-center shrink-0 ${
-                    isUserSpeaking
-                      ? 'bg-amber-500/30 border border-amber-500/60'
-                      : isMicActive
-                      ? 'bg-rose-500/30 border border-rose-500/60'
-                      : 'bg-sky-500/20 border border-sky-500/40'
-                  }`}
-                >
-                  <Mic
-                    size={22}
-                    color={isUserSpeaking ? '#FBBF24' : isMicActive ? '#F43F5E' : '#38BDF8'}
-                  />
-                </View>
-                <View className="flex-1 min-w-0">
-                  <View className="flex-row items-center gap-2">
-                    <Text className="text-sm font-black text-white" numberOfLines={1}>
-                      {isUserSpeaking
-                        ? 'YOU ARE SPEAKING • AI PAUSED'
-                        : isMicActive
-                        ? 'MIC LISTENING • SPEAK ANYTIME'
-                        : 'TAP TO ADD VOICE OR SPEAK WITH AI'}
-                    </Text>
-                    {isUserSpeaking ? (
-                      <View className="w-2 h-2 rounded-full bg-amber-400" />
-                    ) : isMicActive ? (
-                      <View className="w-2 h-2 rounded-full bg-rose-500" />
-                    ) : null}
-                  </View>
-                  <Text className="text-[11px] text-zinc-400 mt-0.5" numberOfLines={1}>
-                    {isUserSpeaking
-                      ? 'AI will wait until you are quiet, then guide your emergency.'
-                      : isMicActive
-                      ? 'AI pauses instantly when you speak and guides once quiet.'
-                      : 'Speak freely; your dispatch queue timer will not reset.'}
-                  </Text>
-                </View>
+          {/* Hands-Free Passive Listening Banner (No Tap Required) */}
+          <View className="p-3.5 rounded-2xl bg-[#09090B] border border-[#27272A] flex-row items-center justify-between gap-3">
+            <View className="flex-row items-center gap-3 flex-1 min-w-0">
+              <View className="w-10 h-10 rounded-xl bg-sky-500/15 border border-sky-500/40 items-center justify-center shrink-0">
+                <Mic size={18} color={isUserSpeaking ? '#FBBF24' : '#38BDF8'} />
               </View>
-
-              {isMicActive && (
-                <View
-                  className={`flex-row items-center gap-1.5 px-2.5 py-1 rounded-full shrink-0 ${
-                    isUserSpeaking ? 'bg-amber-500/20' : 'bg-rose-500/20'
-                  }`}
-                >
-                  <Volume2 size={13} color={isUserSpeaking ? '#FBBF24' : '#F43F5E'} />
-                  <Text
-                    className={`text-[10px] font-black ${
-                      isUserSpeaking ? 'text-amber-400' : 'text-rose-400'
-                    }`}
-                  >
-                    {audioLevel}%
-                  </Text>
-                </View>
-              )}
+              <View className="flex-1 min-w-0">
+                <Text className="text-xs font-black text-white" numberOfLines={1}>
+                  {isUserSpeaking ? 'HEARING YOUR VOICE...' : 'HANDS-FREE VOICE AI ACTIVE'}
+                </Text>
+                <Text className="text-[11px] text-zinc-400 mt-0.5" numberOfLines={1}>
+                  Always listening • Speak freely, dispatch queue continues
+                </Text>
+              </View>
             </View>
-          </Pressable>
 
-          {/* Real-time Emotion & Distress Rating Display */}
-          <View className="rounded-2xl bg-[#09090B] border border-[#27272A] p-3.5 gap-2.5">
-            <View className="flex-row items-center justify-between gap-2 flex-wrap">
+            {audioLevel > 0 && (
+              <View className="flex-row items-center gap-1 px-2.5 py-1 rounded-full bg-sky-500/15 shrink-0">
+                <Volume2 size={12} color="#38BDF8" />
+                <Text className="text-[10px] font-bold text-sky-400">{audioLevel}%</Text>
+              </View>
+            )}
+          </View>
+
+          {/* Simplified, Non-Alarmist Emotional Reassurance Status */}
+          <View className="rounded-2xl bg-[#09090B] border border-[#27272A] p-3.5 gap-2">
+            <View className="flex-row items-center justify-between gap-2">
               <View className="flex-row items-center gap-2">
-                <HeartPulse size={15} color={callerEmotion.color || '#38BDF8'} />
+                <HeartPulse
+                  size={15}
+                  color={
+                    scenarioPanicGuidance.isPanicking || callerEmotion.emotion === 'PANICKED'
+                      ? '#F43F5E'
+                      : '#10B981'
+                  }
+                />
                 <Text className="text-xs font-black text-white uppercase tracking-wider">
-                  DETECTED EMOTIONAL STATE:
+                  STATUS GUIDANCE:
                 </Text>
               </View>
-
-              {/* Dynamic Emotion Pill */}
               <View
-                className="px-2.5 py-1 rounded-full border flex-row items-center gap-1.5"
-                style={{
-                  backgroundColor: `${callerEmotion.color}20`,
-                  borderColor: `${callerEmotion.color}60`,
-                }}
+                className={`px-2.5 py-0.5 rounded-full border ${
+                  scenarioPanicGuidance.isPanicking || callerEmotion.emotion === 'PANICKED'
+                    ? 'bg-rose-500/15 border-rose-500/40'
+                    : 'bg-emerald-500/15 border-emerald-500/40'
+                }`}
               >
-                <View
-                  className="w-2 h-2 rounded-full"
-                  style={{ backgroundColor: callerEmotion.color }}
-                />
                 <Text
-                  className="text-[10px] font-black tracking-wider uppercase"
-                  style={{ color: callerEmotion.color }}
+                  className={`text-[10px] font-black uppercase ${
+                    scenarioPanicGuidance.isPanicking || callerEmotion.emotion === 'PANICKED'
+                      ? 'text-rose-400'
+                      : 'text-emerald-300'
+                  }`}
                 >
-                  {callerEmotion.emotionLabel}
+                  {scenarioPanicGuidance.isPanicking || callerEmotion.emotion === 'PANICKED'
+                    ? 'CRITICAL DISTRESS'
+                    : 'CALM & MONITORED'}
                 </Text>
               </View>
             </View>
 
-            {/* Distress Level Progress Bar */}
-            <View className="gap-1 pt-1">
-              <View className="flex-row items-center justify-between">
-                <Text className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
-                  DISTRESS LEVEL: {callerEmotion.distressLevel}
-                </Text>
-                <Text
-                  className="text-[10px] font-mono font-black"
-                  style={{ color: callerEmotion.color }}
-                >
-                  {callerEmotion.distressScore}%
-                </Text>
-              </View>
-              <View className="w-full h-2 rounded-full bg-zinc-800 overflow-hidden">
-                <View
-                  className="h-full rounded-full"
-                  style={{
-                    width: `${callerEmotion.distressScore}%`,
-                    backgroundColor: callerEmotion.color,
-                  }}
-                />
-              </View>
-            </View>
-
-            {/* Detected Psychological / Behavioral Pattern */}
-            <View className="pt-1 border-t border-[#27272A]/70">
-              <Text className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
-                DETECTED CALLER BEHAVIOR:
-              </Text>
-              <Text className="text-xs font-semibold text-zinc-200 mt-0.5 leading-relaxed">
-                {callerEmotion.detectedBehavior}
-              </Text>
-            </View>
+            <Text className="text-xs font-medium text-zinc-300 leading-relaxed italic">
+              "{scenarioPanicGuidance.isPanicking || callerEmotion.emotion === 'PANICKED'
+                ? scenarioPanicGuidance.reassuranceText
+                : callerEmotion.summary || 'Stay on the line. Responders are actively being routed to your coordinates.'}"
+            </Text>
           </View>
-
-          {/* DEDICATED SCENARIO-BASED PANIC GUIDANCE CARD (TRIGGERS IF PANICKING) */}
-          {scenarioPanicGuidance.isPanicking ||
-          callerEmotion.emotion === 'PANICKED' ||
-          callerEmotion.distressScore >= 70 ? (
-            <View className="rounded-2xl bg-rose-500/10 border-2 border-rose-500/50 p-4 gap-3">
-              <View className="flex-row items-center justify-between gap-2 flex-wrap">
-                <View className="flex-row items-center gap-2">
-                  <AlertTriangle size={16} color="#F43F5E" />
-                  <Text className="text-xs font-black text-rose-300 uppercase tracking-wider">
-                    {scenarioPanicGuidance.calmingTitle}
-                  </Text>
-                </View>
-                <View className="bg-rose-500/25 px-2.5 py-0.5 rounded-full border border-rose-500/50">
-                  <Text className="text-[9px] font-black text-rose-200 uppercase tracking-wider">
-                    {scenarioPanicGuidance.scenarioLabel}
-                  </Text>
-                </View>
-              </View>
-
-              <Text className="text-xs font-bold text-rose-100 leading-relaxed italic">
-                "{scenarioPanicGuidance.reassuranceText}"
-              </Text>
-
-              <View className="gap-2 pt-1 border-t border-rose-500/30">
-                <Text className="text-[10px] font-black text-rose-400 uppercase tracking-wider">
-                  SCENARIO ACTIONS TO DO IMMEDIATELY:
-                </Text>
-                {scenarioPanicGuidance.steps.map((step, idx) => (
-                  <View
-                    key={idx}
-                    className="flex-row items-start gap-2.5 bg-[#09090B]/90 rounded-xl p-2.5 border border-rose-500/30"
-                  >
-                    <View className="w-5 h-5 rounded-full bg-rose-500/30 items-center justify-center mt-0.5">
-                      <Text className="text-[10px] font-black text-rose-300">{idx + 1}</Text>
-                    </View>
-                    <Text className="text-xs font-medium text-zinc-100 flex-1 leading-relaxed">
-                      {step}
-                    </Text>
-                  </View>
-                ))}
-              </View>
-            </View>
-          ) : (
-            /* Concrete Behavioral Guidance Checklist (Standard Calming Guidance) */
-            <View className="gap-2">
-              <View className="flex-row items-center gap-2">
-                <Activity size={14} color="#38BDF8" />
-                <Text className="text-[11px] font-black text-sky-400 uppercase tracking-wider">
-                  SCENARIO BEHAVIORAL ACTIONS ({scenarioPanicGuidance.scenarioCategory}):
-                </Text>
-              </View>
-
-              {callerEmotion.instructions.map((step, idx) => (
-                <View
-                  key={idx}
-                  className="flex-row items-start gap-2.5 bg-[#09090B] border border-[#27272A] rounded-xl p-2.5"
-                >
-                  <View
-                    className="w-5 h-5 rounded-full items-center justify-center mt-0.5"
-                    style={{ backgroundColor: `${callerEmotion.color}25` }}
-                  >
-                    <Text
-                      className="text-[10px] font-black"
-                      style={{ color: callerEmotion.color }}
-                    >
-                      {idx + 1}
-                    </Text>
-                  </View>
-                  <Text className="text-xs font-medium text-zinc-200 flex-1 leading-relaxed">
-                    {step}
-                  </Text>
-                </View>
-              ))}
-            </View>
-          )}
 
           {/* Latest Caller Utterance Appended to Incident Brief */}
           {lastUserUtterance ? (
@@ -1016,186 +820,8 @@ export default function CallerWaitingScreen() {
           ) : null}
         </View>
 
-        {/* LIVE MAP ROUTING TO NEAREST DEPARTMENT */}
-        <View className="w-full rounded-3xl bg-[#18181B] border border-[#27272A] overflow-hidden shadow-2xl">
-          <View className="p-3 sm:p-4 px-4 sm:px-5 border-b border-[#27272A] flex-row items-center justify-between bg-[#1F1F23] gap-2 flex-wrap">
-            <View className="flex-row items-center gap-2.5 flex-1 min-w-[170px]">
-              <View className="p-2 rounded-xl bg-sky-500/20 shrink-0">
-                <Route size={15} color="#38BDF8" />
-              </View>
-              <View className="flex-1 min-w-0">
-                <Text className="text-[10px] font-black uppercase tracking-wider text-sky-400" numberOfLines={1}>
-                  {isTimedOut ? 'LIVE RADAR SCANNING • CALLER GPS' : 'LIVE MAP ROUTING'}
-                </Text>
-                <Text className="text-xs sm:text-sm font-black text-white" numberOfLines={1}>
-                  {isTimedOut ? 'Scanning Units Around Arthaland Tower, BGC' : deptName}
-                </Text>
-              </View>
-            </View>
-            <View className="bg-emerald-500/15 border border-emerald-500/30 px-2.5 py-1 rounded-full flex-row items-center gap-1.5 shrink-0">
-              <View className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-              <Text className="text-[9px] font-black text-emerald-400">
-                {isTimedOut ? 'RADAR PING ACTIVE' : 'ORS ROUTE LIVE'}
-              </Text>
-            </View>
-          </View>
-
-          {/* Render the interactive Leaflet + OpenStreetMap + ORS Route */}
-          <LiveMapView
-            callerLat={callerLat}
-            callerLng={callerLng}
-            callerAddress={callerAddress}
-            responderLat={deptLat}
-            responderLng={deptLng}
-            responderAddress={deptAddress}
-            departmentName={deptName}
-            role="CALLER"
-            mapHeight={280}
-            nearbyDepartments={nearbyDepartments}
-            isPingingRadar={isTimedOut || !activeIncident.responder_id}
-          />
-        </View>
-
-        {/* UGNAY AI EMERGENCY GUIDANCE & PROTOCOLS CARD */}
-        <View className="w-full gap-4 rounded-3xl bg-[#18181B] border border-emerald-500/30 p-4 sm:p-5 shadow-lg">
-          <View className="flex-row items-center justify-between border-b border-[#27272A] pb-3 gap-2 flex-wrap">
-            <View className="flex-row items-center gap-2 shrink-0">
-              <HeartHandshake size={16} color="#10B981" />
-              <Text className="text-xs font-black text-emerald-400 uppercase tracking-wider">
-                AI EMERGENCY GUIDANCE
-              </Text>
-            </View>
-            {guidance.panicDetected ? (
-              <View className="flex-row items-center gap-1 bg-amber-500/20 border border-amber-500/50 rounded-full px-2.5 py-1 shrink-0">
-                <AlertTriangle size={11} color="#FBBF24" />
-                <Text className="text-[10px] font-black text-amber-300">PANIC DE-ESCALATION</Text>
-              </View>
-            ) : (
-              <View className="flex-row items-center gap-1 bg-emerald-500/15 rounded-full px-2.5 py-1 shrink-0">
-                <CheckCircle2 size={11} color="#10B981" />
-                <Text className="text-[10px] font-extrabold text-emerald-300">
-                  {activeIncident.type === 'GENERAL' ? 'AI GUIDING EMERGENCY' : 'AI GUIDE ACTIVE'}
-                </Text>
-              </View>
-            )}
-          </View>
-
-          {/* Calming Reassurance Banner */}
-          <View className="rounded-2xl bg-emerald-500/10 border border-emerald-500/20 p-3.5">
-            <Text className="text-xs font-bold text-emerald-200 leading-relaxed">
-              "{guidance.reassurance}"
-            </Text>
-          </View>
-
-          {/* Interactive 4-4-4 Box Breathing Guide Widget */}
-          <View className="rounded-2xl bg-[#09090B] border border-[#27272A] p-4 items-center gap-3">
-            <View className="flex-row items-center justify-between w-full gap-2 flex-wrap">
-              <View className="flex-row items-center gap-2 flex-1 min-w-[140px]">
-                <Wind size={15} color="#38BDF8" />
-                <Text className="text-xs font-black text-white uppercase tracking-wider">
-                  BOX BREATHING (4-4-4)
-                </Text>
-              </View>
-              <Pressable
-                onPress={() => setIsBreathingGuideActive((prev) => !prev)}
-                className={`px-3 py-1.5 rounded-full border shrink-0 ${
-                  isBreathingGuideActive
-                    ? 'bg-rose-500/20 border-rose-500/50'
-                    : 'bg-sky-500/20 border-sky-500/50'
-                }`}
-              >
-                <Text className="text-[10px] font-black text-white">
-                  {isBreathingGuideActive ? 'STOP GUIDE' : 'START BREATHING'}
-                </Text>
-              </Pressable>
-            </View>
-
-            {isBreathingGuideActive ? (
-              <View className="items-center py-2 gap-2">
-                <View className="w-20 h-20 rounded-full border-4 border-sky-400 items-center justify-center bg-sky-500/10 shadow-lg">
-                  <Text className="text-2xl font-black text-sky-400 font-mono">
-                    {breathingTimer}
-                  </Text>
-                </View>
-                <Text className="text-sm font-black uppercase tracking-widest text-emerald-400">
-                  {breathingPhase === 'INHALE' ? 'INHALE DEEPLY (4s)' : breathingPhase === 'HOLD' ? 'HOLD BREATH (4s)' : 'SLOWLY EXHALE (4s)'}
-                </Text>
-                <Text className="text-[11px] text-zinc-400 text-center max-w-xs">
-                  Synchronize your breathing with the counter to lower your heart rate.
-                </Text>
-              </View>
-            ) : (
-              <Text className="text-[11px] text-zinc-400 text-center">
-                Feeling anxious or overwhelmed? Tap 'START BREATHING' to follow the AI calming breathing exercise.
-              </Text>
-            )}
-          </View>
-
-          {/* Interactive Calming & Distraction Topics */}
-          <View className="gap-2">
-            <Text className="text-[11px] font-black text-zinc-400 uppercase tracking-wider">
-              INTERACTIVE AI CONVERSATION & GROUNDING TOPICS:
-            </Text>
-            <View className="flex-row flex-wrap gap-2">
-              {CALMING_TOPICS.map((topic) => {
-                const IconComponent = topic.icon;
-                return (
-                  <Pressable
-                    key={topic.id}
-                    onPress={() => handleSelectCalmingTopic(topic)}
-                    className="flex-row items-center gap-2 bg-[#09090B] border border-[#27272A] hover:border-sky-500/40 rounded-xl p-2.5 px-3 active:bg-zinc-800"
-                  >
-                    <IconComponent size={14} color="#38BDF8" />
-                    <View>
-                      <Text className="text-xs font-black text-zinc-200">{topic.title}</Text>
-                      <Text className="text-[10px] font-medium text-zinc-500">{topic.hint}</Text>
-                    </View>
-                  </Pressable>
-                );
-              })}
-            </View>
-          </View>
-
-          {/* Actionable First-Aid Steps Checklist */}
-          <View className="gap-2">
-            <Text className="text-[11px] font-black text-zinc-400 uppercase tracking-wider">
-              {activeIncident.type === 'GENERAL'
-                ? 'EMERGENCY PROTOCOLS & SAFETY ACTIONS:'
-                : 'IMMEDIATE LIFE-SAVING STEPS TO DO NOW:'}
-            </Text>
-            {guidance.steps.map((step, idx) => (
-              <View
-                key={idx}
-                className="flex-row items-start gap-2.5 bg-[#09090B] border border-[#27272A] rounded-xl p-2.5"
-              >
-                <View className="w-5 h-5 rounded-full bg-emerald-500/20 items-center justify-center mt-0.5">
-                  <Text className="text-[10px] font-black text-emerald-400">{idx + 1}</Text>
-                </View>
-                <Text className="text-xs font-medium text-zinc-200 flex-1 leading-relaxed">
-                  {step}
-                </Text>
-              </View>
-            ))}
-          </View>
-
-          {/* Dispatch Live Telemetry Sync Banner */}
-          <View className="rounded-2xl bg-[#09090B] border border-emerald-500/30 p-3.5 flex-row items-center gap-3">
-            <View className="p-2 rounded-xl bg-emerald-500/20 shrink-0">
-              <CheckCircle2 size={16} color="#10B981" />
-            </View>
-            <View className="flex-1 min-w-0">
-              <Text className="text-xs font-black text-white">
-                LIVE DISPATCH CONTINUES UNINTERRUPTED
-              </Text>
-              <Text className="text-[11px] text-zinc-400">
-                You can talk to UGNAY AI at any time using the Voice Companion above. Your queue position is preserved.
-              </Text>
-            </View>
-          </View>
-        </View>
-
         {/* Back / Brief Navigation */}
-        <View className="w-full">
+        <View className="w-full pt-1 pb-4">
           <Button
             title="RETURN TO INCIDENT BRIEF"
             variant="outline"

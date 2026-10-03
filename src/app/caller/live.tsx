@@ -381,6 +381,11 @@ export default function CallerLiveCall() {
             incidentId={activeIncident.id}
             role="CALLER"
             senderName={activeIncident.caller_name || 'Citizen Caller'}
+            otherPartyName={activeIncident.responder_name || activeIncident.department_name || 'Officer Marcelo Santos'}
+            departmentName={activeIncident.department_name || activeIncident.station_name || 'Emergency Response Unit'}
+            incidentType={activeIncident.type || 'EMERGENCY'}
+            location={activeIncident.caller_address || activeIncident.location}
+            initialReport={activeIncident.speech_transcript || activeIncident.description || activeIncident.summary}
           />
 
           {/* Dynamic Incident Details Brief */}

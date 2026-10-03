@@ -10,9 +10,11 @@ import { ConnectionStatus } from '@/components/ui/ConnectionStatus';
 import { Logo } from '@/components/ui/logo';
 import { RoutingLoadingModal } from '@/components/ui/RoutingLoadingModal';
 
+import { HeartHandshake } from 'lucide-react-native';
+
 export default function CallerAnalyzing() {
   const router = useRouter();
-  const { speechTranscript, setActiveIncident } = useIncidentStore();
+  const { speechTranscript, setActiveIncident, selectedLanguage } = useIncidentStore();
   const { latitude: deviceLat, longitude: deviceLng, addressString } = useDeviceLocation();
 
   const [analysisResult, setAnalysisResult] = useState<{
@@ -170,6 +172,26 @@ export default function CallerAnalyzing() {
               </Text>
             </View>
           ) : null}
+        </View>
+
+        {/* Real-Time AI Emotional Support & Queuing Guidance */}
+        <View className="w-full gap-2.5 rounded-3xl bg-sky-500/10 border border-sky-500/30 p-5 shadow-sm">
+          <View className="flex-row items-center gap-2">
+            <HeartHandshake size={18} color="#38BDF8" />
+            <Text className="text-xs font-black uppercase tracking-wider text-sky-400">
+              AI GUIDANCE & EMOTIONAL SUPPORT
+            </Text>
+          </View>
+          <Text className="text-sm font-bold text-sky-100 leading-relaxed italic">
+            "{selectedLanguage?.includes('Bisaya') || selectedLanguage?.includes('Cebuano')
+              ? 'Nagsugod na ang pagpila sa responder. Kalma lang, ginhawa og lawom, ug pabilin sa linya. Tabang padulong na.'
+              : selectedLanguage?.includes('Tagalog') || selectedLanguage?.includes('Filipino')
+              ? 'Nagsisimula na ang pagpila ng responder. Huminahon po kayo, huminga nang malalim, at manatili sa linya. Papunta na ang tulong.'
+              : 'Responder queuing has started. Please stay calm, take a slow deep breath, and remain on the line. Help is being coordinated.'}"
+          </Text>
+          <Text className="text-[11px] font-semibold text-sky-300/80">
+            Keep this screen open • GPS tracking actively locking onto your coordinates
+          </Text>
         </View>
 
         <Text className="text-xs text-zinc-500 font-semibold text-center">

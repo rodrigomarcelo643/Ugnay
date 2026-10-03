@@ -204,7 +204,8 @@ export function useLiveSpeech(
               const actualMime = recorder.mimeType || 'audio/webm';
               const audioBlob = new Blob(recordedChunksRef.current, { type: actualMime });
               recordedChunksRef.current = [];
-              if (audioBlob.size > 2000) {
+              // Require at least ~1.5s of real audio content (size > 6000) to avoid background click hallucinations
+              if (audioBlob.size > 6000) {
                 isWhisperTranscribingRef.current = true;
                 try {
                   const whisperText = await transcribeWithOpenAIWhisper(audioBlob);
@@ -314,6 +315,11 @@ export function useLiveSpeech(
         } as any);
       }
       formData.append('model', 'whisper-1');
+      formData.append(
+        'prompt',
+        'UGNAY 911 Emergency Philippines. Tabang, sunog, baha, disgrasya, aksidente, tulong, saklolo, pulis, ambulansya, ospital, pasyente, rescue. Dialects: Bisaya, Cebuano, Tagalog, English.'
+      );
+      formData.append('temperature', '0.0');
 
       const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
         method: 'POST',
@@ -325,8 +331,12 @@ export function useLiveSpeech(
 
       if (res.ok) {
         const data = await res.json();
-        const text = sanitizeTranscript(data.text || '');
-        if (text) {
+        const rawText = data.text || '';
+        if (/[\u0400-\u04FF\u4E00-\u9FFF\u0600-\u06FF]/.test(rawText) || /(?:дякуємо|перегляд|спасибо)/i.test(rawText)) {
+          return '';
+        }
+        const text = sanitizeTranscript(rawText);
+        if (text && text.trim().length > 2) {
           setTranscript((prev) => (prev ? `${prev} ${text}` : text));
           if (onTranscriptUpdateRef.current) {
             onTranscriptUpdateRef.current(text);
@@ -385,16 +395,14 @@ export function useLiveSpeech(
           recognition.continuous = true;
           recognition.interimResults = true;
 
-          // Select BCP-47 language according to active store selection with robust fallbacks
+          // Select BCP-47 language according to active store selection
           const storeLang = useIncidentStore.getState().selectedLanguage;
-          let bcp47 = 'en-US';
+          let bcp47 = 'fil-PH';
           if (storeLang?.includes('English')) {
             bcp47 = 'en-US';
-          } else if (storeLang?.includes('Tagalog') || storeLang?.includes('Filipino')) {
-            bcp47 = 'fil-PH';
           } else {
-            // For Bisaya / Cebuano, default to browser/system language with en-US fallback
-            bcp47 = typeof navigator !== 'undefined' && navigator.language ? navigator.language : 'en-US';
+            // fil-PH supports Philippine phonetics for Bisaya and Tagalog
+            bcp47 = 'fil-PH';
           }
           recognition.lang = bcp47;
           try {
@@ -428,15 +436,12 @@ export function useLiveSpeech(
               }
             }
 
-            // Immediately propagate interim live speech so caller sees words in real-time
+            // Propagate interim live speech to interim display only
             if (currentInterim.trim()) {
               if (onSpeechStartRef.current) {
                 onSpeechStartRef.current();
               }
               setInterimTranscript(currentInterim.trim());
-              if (onTranscriptUpdateRef.current) {
-                onTranscriptUpdateRef.current(currentInterim.trim());
-              }
             }
 
             // Propagate finalized sentence

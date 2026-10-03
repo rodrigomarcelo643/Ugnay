@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text } from 'react-native';
 
-export type ConnectionState = 'LIVE' | 'WEAK' | 'BURST' | 'OFFLINE' | 'CONNECTING';
+export type ConnectionState = 'LIVE' | 'WEAK' | 'BURST' | 'OFFLINE' | 'CONNECTING' | 'CONNECTED';
 
 interface ConnectionStatusProps {
   status?: ConnectionState;
@@ -12,7 +12,11 @@ export const ConnectionStatus: React.FC<ConnectionStatusProps> = ({ status = 'LI
   let dotColor = 'bg-emerald-500';
   let badgeBg = 'bg-emerald-50 border-emerald-200 text-emerald-800';
 
-  if (status === 'CONNECTING') {
+  if (status === 'CONNECTED') {
+    label = 'RESOLVED';
+    dotColor = 'bg-sky-500';
+    badgeBg = 'bg-sky-50 border-sky-200 text-sky-800';
+  } else if (status === 'CONNECTING') {
     label = 'CONNECTING...';
     dotColor = 'bg-sky-500';
     badgeBg = 'bg-sky-50 border-sky-200 text-sky-800';
