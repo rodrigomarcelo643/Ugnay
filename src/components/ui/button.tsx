@@ -9,6 +9,7 @@ interface ButtonProps {
   loading?: boolean;
   disabled?: boolean;
   className?: string;
+  textClassName?: string;
   icon?: React.ReactNode;
 }
 
@@ -20,6 +21,7 @@ export const Button: React.FC<ButtonProps> = ({
   loading = false,
   disabled = false,
   className = '',
+  textClassName = '',
   icon,
 }) => {
   let bgClasses = 'bg-blue-600 active:bg-blue-700';
@@ -67,7 +69,7 @@ export const Button: React.FC<ButtonProps> = ({
       ) : (
         <>
           {icon}
-          <Text className={`text-center ${textClasses}`}>{title}</Text>
+          <Text className={`text-center ${textClasses} ${textClassName}`}>{title}</Text>
         </>
       )}
     </Pressable>

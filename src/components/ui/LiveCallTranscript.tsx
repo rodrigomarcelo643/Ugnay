@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable, TextInput } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, useWindowDimensions } from 'react-native';
 import { MessageSquare, Send, Sparkles, User, ShieldCheck, Mic, Volume2 } from 'lucide-react-native';
 import { supabaseService } from '@/services/supabase';
 import { CallMessage } from '@/types/incident';
 import { useLiveSpeech } from '@/hooks/useLiveSpeech';
-import { sanitizeTranscript, AIService } from '@/services/ai';
+import { sanitizeTranscript } from '@/services/ai';
 import { TypewriterText } from '@/components/ui/TypewriterText';
 import { useIncidentStore } from '@/store/incidentStore';
 
@@ -35,91 +35,21 @@ export const LiveCallTranscript: React.FC<LiveCallTranscriptProps> = ({
   const [liveSpokenText, setLiveSpokenText] = useState<string>('');
   const lastSpokenRef = useRef<string>('');
   const scrollViewRef = useRef<ScrollView>(null);
-  const autoReplyTimerRef = useRef<any>(null);
-  const { selectedLanguage } = useIncidentStore();
+  // Filter out any stale static canned strings from previous test runs
+  const isCannedStaticSeed = (text: string) => {
+    const lower = (text || '').toLowerCase();
+    return (
+      lower.includes('arthaland century pacific') ||
+      lower.includes('nagkinahanglan mi og dinalian nga rescue') ||
+      lower.includes('kailangan po namin ng agarang tulong') ||
+      lower.includes('immediate assistance requested') ||
+      lower.includes('nadawat namo ang report') ||
+      lower.includes('nakatanggap po kami ng inyong tawag') ||
+      lower.includes('we have your gps coordinates locked')
+    );
+  };
 
-  const callerDisplayName = role === 'CALLER' ? senderName : (otherPartyName || 'Citizen Caller');
-  const responderDisplayName = role === 'RESPONDER' ? senderName : (otherPartyName || departmentName || 'Officer Marcelo Santos');
-
-  // Trigger conversational response from the other party if on single device
-  const triggerCounterpartResponse = useCallback(
-    (promptText: string, originatingRole: 'CALLER' | 'RESPONDER') => {
-      const sanitizedPrompt = sanitizeTranscript(promptText);
-      if (!sanitizedPrompt || sanitizedPrompt.length < 4) return;
-
-      if (autoReplyTimerRef.current) {
-        clearTimeout(autoReplyTimerRef.current);
-      }
-
-      autoReplyTimerRef.current = setTimeout(async () => {
-        if (!incidentId) return;
-
-        try {
-          if (originatingRole === 'CALLER') {
-            // Caller spoke -> Responder replies
-            const responderReply = await AIService.generateResponderReply(
-              promptText,
-              {
-                type: incidentType,
-                departmentName,
-                location,
-                responderName: responderDisplayName,
-              },
-              selectedLanguage
-            );
-
-            if (responderReply) {
-              const respMsg = await supabaseService.sendMessage(
-                incidentId,
-                responderDisplayName,
-                responderReply,
-                'RESPONDER_SPEECH'
-              );
-              setMessages((prev) => [...prev.filter((m) => m.id !== respMsg.id), respMsg]);
-              setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
-
-              // If caller is listening, voice the responder's reply over audio
-              if (role === 'CALLER') {
-                AIService.speakGreeting(responderReply, selectedLanguage);
-              }
-            }
-          } else {
-            // Responder spoke -> Caller confirms
-            const callerReply = await AIService.generateCallerReply(
-              promptText,
-              {
-                type: incidentType,
-                location,
-                callerName: callerDisplayName,
-              },
-              selectedLanguage
-            );
-
-            if (callerReply) {
-              const callMsg = await supabaseService.sendMessage(
-                incidentId,
-                callerDisplayName,
-                callerReply,
-                'CALLER_SPEECH'
-              );
-              setMessages((prev) => [...prev.filter((m) => m.id !== callMsg.id), callMsg]);
-              setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
-
-              // If responder is listening, voice the caller's reply over audio
-              if (role === 'RESPONDER') {
-                AIService.speakGreeting(callerReply, selectedLanguage);
-              }
-            }
-          }
-        } catch (e) {
-          console.warn('Live dialogue counterpart error:', e);
-        }
-      }, 2400);
-    },
-    [incidentId, incidentType, departmentName, location, responderDisplayName, callerDisplayName, role, selectedLanguage]
-  );
-
-  // Auto speech-to-text callback during live call
+  // Auto speech-to-text callback during live call: captures genuine spoken speech from mic
   const handleLiveSpeechChunk = useCallback(
     async (liveText: string) => {
       const cleanText = sanitizeTranscript(liveText);
@@ -133,14 +63,11 @@ export const LiveCallTranscript: React.FC<LiveCallTranscriptProps> = ({
         const newMsg = await supabaseService.sendMessage(incidentId, senderName, cleanText, msgType);
         setMessages((prev) => [...prev.filter((m) => m.id !== newMsg.id), newMsg]);
         setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
-
-        // Advance two-person conversation
-        triggerCounterpartResponse(cleanText, role);
       } catch (err) {
-        console.warn('Auto live transcript send warning:', err);
+        console.warn('Live transcript send warning:', err);
       }
     },
-    [incidentId, role, senderName, triggerCounterpartResponse]
+    [incidentId, role, senderName]
   );
 
   const { isListening, interimTranscript, audioLevel, startListening, stopListening } =
@@ -152,64 +79,34 @@ export const LiveCallTranscript: React.FC<LiveCallTranscriptProps> = ({
 
     return () => {
       stopListening();
-      if (autoReplyTimerRef.current) {
-        clearTimeout(autoReplyTimerRef.current);
-      }
     };
   }, [startListening, stopListening]);
 
-  // Initial fetch and automatic conversation dialogue seeding
+  // Fetch genuine messages and listen in real-time to both caller and responder on the call
   useEffect(() => {
     if (!incidentId) return;
 
     let isMounted = true;
 
     const initConversation = async () => {
-      const initialMsgs = await supabaseService.fetchMessages(incidentId);
+      const fetched = await supabaseService.fetchMessages(incidentId);
       if (!isMounted) return;
 
-      if (initialMsgs.length > 0) {
-        setMessages(initialMsgs);
+      // Filter out any stale static canned test messages
+      const genuine = fetched.filter((m) => !isCannedStaticSeed(m.text));
+      setMessages(genuine);
+      if (genuine.length > 0) {
         setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: false }), 100);
-      } else {
-        // Seed the natural opening exchange between the two people
-        try {
-          const isBisaya = (selectedLanguage || '').includes('Cebuano') || (selectedLanguage || '').includes('Bisaya');
-          const isTagalog = (selectedLanguage || '').includes('Tagalog') || (selectedLanguage || '').includes('Filipino');
-
-          const callerOpening = initialReport || (
-            isBisaya
-              ? `Emergency kini sa ${location || 'Arthaland Century Pacific Tower, BGC'}. Nagkinahanglan mi og dinalian nga rescue.`
-              : isTagalog
-              ? `Emergency po dito sa ${location || 'Arthaland Century Pacific Tower, BGC'}. Kailangan po namin ng agarang tulong.`
-              : `Emergency situation at ${location || 'Arthaland Century Pacific Tower, BGC'}. Immediate assistance requested.`
-          );
-
-          const responderOpening = isBisaya
-            ? `Nadawat namo ang report, kini ang ${departmentName}. Naka-lock na ang inyong GPS coordinates ug nagdali na ang among unit padulong diha. Luwas ba mo sa inyong pwesto karon?`
-            : isTagalog
-            ? `Nakatanggap po kami ng inyong tawag, ito ang ${departmentName}. Naka-lock na ang GPS coordinates at papunta na ang aming unit. Ligtas po ba ang inyong kinaroroonan ngayon?`
-            : `This is ${departmentName}. We have your GPS coordinates locked and emergency response units are actively en route. Are you in a safe position right now?`;
-
-          const m1 = await supabaseService.sendMessage(incidentId, callerDisplayName, callerOpening, 'CALLER_SPEECH');
-          const m2 = await supabaseService.sendMessage(incidentId, responderDisplayName, responderOpening, 'RESPONDER_SPEECH');
-
-          if (isMounted) {
-            setMessages([m1, m2]);
-            setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
-          }
-        } catch (e) {
-          console.warn('Initial dialogue seed error:', e);
-        }
       }
     };
 
     initConversation();
 
-    // Real-time subscription for live transcripts between caller and responder
+    // Real-time subscription: when either person on the call speaks, their log displays immediately
     const channel = supabaseService.subscribeToMessages(incidentId, (updatedMsgs) => {
       if (isMounted) {
-        setMessages(updatedMsgs);
+        const genuine = updatedMsgs.filter((m) => !isCannedStaticSeed(m.text));
+        setMessages(genuine);
         setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
       }
     });
@@ -218,7 +115,7 @@ export const LiveCallTranscript: React.FC<LiveCallTranscriptProps> = ({
       isMounted = false;
       if (channel) channel.unsubscribe();
     };
-  }, [incidentId, selectedLanguage, initialReport, location, departmentName, callerDisplayName, responderDisplayName]);
+  }, [incidentId]);
 
   const handleSendMessage = async (textToSendOverride?: string) => {
     const textToSend = (textToSendOverride || inputText).trim();
@@ -232,9 +129,6 @@ export const LiveCallTranscript: React.FC<LiveCallTranscriptProps> = ({
       const newMsg = await supabaseService.sendMessage(incidentId, senderName, textToSend, msgType);
       setMessages((prev) => [...prev.filter((m) => m.id !== newMsg.id), newMsg]);
       setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
-
-      // Trigger counterpart reply to continue natural conversation flow
-      triggerCounterpartResponse(textToSend, role);
     } catch (e) {
       console.warn('Error sending live transcript message:', e);
     } finally {
@@ -258,30 +152,40 @@ export const LiveCallTranscript: React.FC<LiveCallTranscriptProps> = ({
           'May kasama ba kayong bata o matanda?',
         ];
 
+  const { width: windowWidth } = useWindowDimensions();
+  const isSmall = windowWidth < 360;
+  const isMedium = windowWidth >= 360 && windowWidth < 768;
+
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { padding: isSmall ? 10 : 14 }]}>
       {/* Header */}
       <View style={styles.headerRow}>
-        <View style={styles.headerLeft}>
-          <MessageSquare size={16} color="#38BDF8" />
-          <Text style={styles.headerTitle}>LIVE 2-WAY EMERGENCY CONVERSATION</Text>
+        <View style={[styles.headerLeft, { flex: 1, minWidth: 0 }]}>
+          <MessageSquare size={isSmall ? 14 : 16} color="#38BDF8" style={{ flexShrink: 0 }} />
+          <Text style={[styles.headerTitle, { fontSize: isSmall ? 9 : 10 }]} numberOfLines={1}>
+            {isSmall ? 'LIVE 2-WAY TRANSCRIPT' : 'LIVE 2-WAY EMERGENCY CONVERSATION'}
+          </Text>
         </View>
-        <View style={styles.syncBadge}>
-          <Sparkles size={11} color="#10B981" />
-          <Text style={styles.syncText}>LIVE CALL TRANSCRIPTION</Text>
+        <View style={[styles.syncBadge, { flexShrink: 0 }]}>
+          <Sparkles size={10} color="#10B981" />
+          <Text style={[styles.syncText, { fontSize: isSmall ? 7.5 : 8 }]}>
+            {isSmall ? 'LIVE TRANSCRIPT' : 'LIVE TRANSCRIPTION'}
+          </Text>
         </View>
       </View>
 
       {/* Live Mic Speech Listening Status Bar */}
       <View style={styles.liveMicBar}>
-        <View style={styles.micLeftGroup}>
-          <Mic size={14} color={isListening ? '#10B981' : '#FBBF24'} />
-          <Text style={styles.micStatusText}>
-            {isListening ? 'MICROPHONE ACTIVE • SPEAK FREELY' : 'MIC STANDBY'}
+        <View style={[styles.micLeftGroup, { flex: 1, minWidth: 0 }]}>
+          <Mic size={isSmall ? 12 : 14} color={isListening ? '#10B981' : '#FBBF24'} style={{ flexShrink: 0 }} />
+          <Text style={[styles.micStatusText, { fontSize: isSmall ? 9 : 10 }]} numberOfLines={1}>
+            {isListening
+              ? (isSmall ? 'MIC ACTIVE • SPEAKING' : 'MICROPHONE ACTIVE • SPEAK FREELY')
+              : 'MIC STANDBY'}
           </Text>
         </View>
         {audioLevel > 0 && (
-          <View style={styles.audioLevelBadge}>
+          <View style={[styles.audioLevelBadge, { flexShrink: 0 }]}>
             <Volume2 size={12} color="#38BDF8" />
             <Text style={styles.audioLevelText}>{audioLevel}%</Text>
           </View>
@@ -299,18 +203,18 @@ export const LiveCallTranscript: React.FC<LiveCallTranscriptProps> = ({
               key={displayText}
               text={`"${displayText}"`}
               speed={25}
-              className="text-xs font-bold text-sky-300 italic"
+              className="text-[11px] sm:text-xs font-bold text-sky-300 italic"
             />
           </View>
         );
       })()}
 
       {/* Categorized Transcript Log Container */}
-      <View style={styles.transcriptBox}>
+      <View style={[styles.transcriptBox, { height: isSmall ? 180 : isMedium ? 210 : 230 }]}>
         {messages.length === 0 ? (
           <View style={styles.emptyState}>
-            <Text style={styles.emptyText}>
-              Connecting two-way voice channel. Speak directly into your microphone during the call.
+            <Text style={[styles.emptyText, { fontSize: isSmall ? 10 : 11 }]}>
+              Live call audio connected. As you and the other person speak on the call, your spoken conversation will appear here in real time.
             </Text>
           </View>
         ) : (
@@ -327,28 +231,32 @@ export const LiveCallTranscript: React.FC<LiveCallTranscriptProps> = ({
                 msg.sender_name?.toLowerCase().includes('caller') ||
                 msg.sender_name?.toLowerCase().includes('citizen');
 
+              const bubbleWidth = isSmall ? '94%' : isMedium ? '88%' : '82%';
+
               return (
                 <View
                   key={msg.id}
                   style={[
                     styles.msgBubble,
                     isCaller ? styles.callerBubble : styles.responderBubble,
+                    { width: bubbleWidth },
                   ]}
                 >
                   <View style={styles.msgHeader}>
-                    <View style={styles.senderInfo}>
+                    <View style={[styles.senderInfo, { flex: 1, minWidth: 0 }]}>
                       {isCaller ? (
-                        <User size={12} color="#38BDF8" />
+                        <User size={11} color="#38BDF8" style={{ flexShrink: 0 }} />
                       ) : (
-                        <ShieldCheck size={12} color="#10B981" />
+                        <ShieldCheck size={11} color="#10B981" style={{ flexShrink: 0 }} />
                       )}
                       <Text
                         style={[
                           styles.senderNameText,
-                          { color: isCaller ? '#38BDF8' : '#10B981' },
+                          { color: isCaller ? '#38BDF8' : '#10B981', fontSize: isSmall ? 8.5 : 9 },
                         ]}
+                        numberOfLines={1}
                       >
-                        {isCaller ? 'CITIZEN CALLER' : 'RESPONDER UNIT'} • {msg.sender_name || (isCaller ? 'Caller' : 'Responder')}
+                        {isCaller ? 'CITIZEN' : 'RESPONDER'} • {msg.sender_name || (isCaller ? 'Caller' : 'Responder')}
                       </Text>
                     </View>
                     <Text style={styles.timeText}>
@@ -364,7 +272,7 @@ export const LiveCallTranscript: React.FC<LiveCallTranscriptProps> = ({
                       key={msg.id}
                       text={msg.text}
                       speed={20}
-                      className="text-xs font-semibold text-white leading-relaxed"
+                      className="text-[11px] sm:text-xs font-semibold text-white leading-relaxed"
                     />
                   </View>
                 </View>
@@ -380,9 +288,9 @@ export const LiveCallTranscript: React.FC<LiveCallTranscriptProps> = ({
           <Pressable
             key={idx}
             onPress={() => handleSendMessage(sug)}
-            style={styles.suggestionChip}
+            style={[styles.suggestionChip, { paddingHorizontal: isSmall ? 6 : 8, paddingVertical: isSmall ? 3 : 4 }]}
           >
-            <Text style={styles.suggestionText}>{sug}</Text>
+            <Text style={[styles.suggestionText, { fontSize: isSmall ? 9 : 10 }]}>{sug}</Text>
           </Pressable>
         ))}
       </View>
@@ -390,23 +298,27 @@ export const LiveCallTranscript: React.FC<LiveCallTranscriptProps> = ({
       {/* Input Box to Speak/Type Live Transcripts */}
       <View style={styles.inputRow}>
         <TextInput
-          style={styles.textInput}
+          style={[styles.textInput, { fontSize: isSmall ? 10 : 11, paddingVertical: isSmall ? 6 : 8 }]}
           value={inputText}
           onChangeText={setInputText}
           placeholder={
-            role === 'CALLER'
-              ? 'Speak into mic or type message to responder...'
-              : 'Speak into mic or type response to caller...'
+            isSmall
+              ? (role === 'CALLER' ? 'Speak or type message...' : 'Speak or type reply...')
+              : (role === 'CALLER' ? 'Speak into mic or type message...' : 'Speak into mic or type response...')
           }
           placeholderTextColor="#71717A"
           onSubmitEditing={() => handleSendMessage()}
         />
         <Pressable
           onPress={() => handleSendMessage()}
-          style={[styles.sendBtn, !inputText.trim() && styles.sendBtnDisabled]}
+          style={[
+            styles.sendBtn,
+            { width: isSmall ? 30 : 34, height: isSmall ? 30 : 34 },
+            !inputText.trim() && styles.sendBtnDisabled,
+          ]}
           disabled={!inputText.trim() || isSubmitting}
         >
-          <Send size={15} color="#FFFFFF" />
+          <Send size={isSmall ? 13 : 15} color="#FFFFFF" />
         </Pressable>
       </View>
     </View>

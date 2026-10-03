@@ -158,32 +158,34 @@ export default function ResponderLiveCall() {
 
   if (!activeIncident || !activeIncident.id || activeIncident.status === 'RESOLVED') {
     return (
-      <View className="flex-1 items-center justify-between bg-[#09090B] px-6 py-8 pb-28">
+      <View className="flex-1 items-center justify-between bg-[#09090B] px-3 sm:px-4 md:px-6 py-4 sm:py-6 md:py-8 pb-20 sm:pb-28">
         <View className="w-full max-w-2xl flex-1 items-center justify-between gap-6">
-          <View className="w-full flex-row items-center justify-between">
-            <View className="flex-row items-center gap-3">
-              <Logo size={36} />
-              <View>
-                <Text className="text-xs font-bold uppercase tracking-wider text-emerald-400">
+          <View className="w-full flex-row items-center justify-between gap-2">
+            <View className="flex-row items-center gap-2 sm:gap-3 flex-1 min-w-0 pr-1">
+              <Logo size={32} />
+              <View className="flex-1 min-w-0">
+                <Text className="text-[10px] sm:text-xs font-bold uppercase tracking-wider text-emerald-400" numberOfLines={1}>
                   RESPONDER AGORA RTC CALL
                 </Text>
-                <Text className="text-base font-black text-white">
+                <Text className="text-sm sm:text-base font-black text-white" numberOfLines={1}>
                   Voice & Video Monitor
                 </Text>
               </View>
             </View>
-            <ConnectionStatus status="LIVE" />
+            <View className="flex-shrink-0">
+              <ConnectionStatus status="LIVE" />
+            </View>
           </View>
 
-          <View className="w-full items-center justify-center gap-4 rounded-3xl bg-[#18181B] border border-[#27272A] p-8 my-auto">
-            <View className="w-16 h-16 rounded-full bg-[#09090B] border border-[#27272A] items-center justify-center">
-              <PhoneOff size={32} color="#71717A" />
+          <View className="w-full items-center justify-center gap-4 rounded-3xl bg-[#18181B] border border-[#27272A] p-5 sm:p-8 my-auto">
+            <View className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-[#09090B] border border-[#27272A] items-center justify-center">
+              <PhoneOff size={28} color="#71717A" />
             </View>
-            <View className="items-center gap-1.5">
-              <Text className="text-xl font-black text-white text-center">
+            <View className="items-center gap-1.5 px-2">
+              <Text className="text-lg sm:text-xl font-black text-white text-center">
                 NO ACTIVE VOICE CALL
               </Text>
-              <Text className="text-xs text-zinc-400 font-medium text-center leading-relaxed max-w-sm">
+              <Text className="text-xs sm:text-sm text-zinc-400 font-medium text-center leading-relaxed max-w-sm">
                 No direct emergency call is currently connected. Accept an incoming dispatch alert to connect directly to the caller via Agora RTC.
               </Text>
             </View>
@@ -195,6 +197,8 @@ export default function ResponderLiveCall() {
               variant="outline"
               size="lg"
               onPress={() => router.push('/responder/incoming')}
+              textClassName="text-xs sm:text-sm md:text-base font-black"
+              className="w-full py-3 sm:py-3.5"
             />
           </View>
         </View>
@@ -203,33 +207,35 @@ export default function ResponderLiveCall() {
   }
 
   return (
-    <ScrollView contentContainerClassName="flex-grow justify-between bg-[#09090B] px-6 py-8 pb-28 items-center">
-      <View className="w-full max-w-2xl flex-grow justify-between gap-6">
-        <View className="gap-6">
+    <ScrollView contentContainerClassName="flex-grow justify-between bg-[#09090B] px-3 sm:px-4 md:px-6 py-4 sm:py-6 md:py-8 pb-20 sm:pb-28 items-center">
+      <View className="w-full max-w-2xl flex-grow justify-between gap-4 sm:gap-6">
+        <View className="gap-4 sm:gap-6">
           {/* Top Header */}
-          <View className="flex-row items-center justify-between">
-            <View className="flex-row items-center gap-3">
-              <Logo size={36} />
-              <View>
-                <Text className="text-xs font-bold uppercase tracking-wider text-emerald-400">
+          <View className="flex-row items-center justify-between gap-2">
+            <View className="flex-row items-center gap-2 sm:gap-3 flex-1 min-w-0 pr-1">
+              <Logo size={32} />
+              <View className="flex-1 min-w-0">
+                <Text className="text-[10px] sm:text-xs font-bold uppercase tracking-wider text-emerald-400" numberOfLines={1}>
                   RESPONDER AGORA RTC (UID: {RESPONDER_UID})
                 </Text>
-                <Text className="text-base font-black text-white">
+                <Text className="text-xs sm:text-sm md:text-base font-black text-white" numberOfLines={1} ellipsizeMode="tail">
                   Channel: {channelName}
                 </Text>
               </View>
             </View>
-            <ConnectionStatus status={isCallerDisconnected ? "OFFLINE" : (joined ? "LIVE" : "CONNECTING")} />
+            <View className="flex-shrink-0">
+              <ConnectionStatus status={isCallerDisconnected ? "OFFLINE" : (joined ? "LIVE" : "CONNECTING")} />
+            </View>
           </View>
 
           {/* Caller Out of Call Status Indicator */}
           {isCallerDisconnected ? (
-            <View className="w-full flex-row items-center justify-between gap-3 rounded-2xl bg-amber-500/15 border border-amber-500/40 p-4">
-              <View className="flex-1 pr-2">
-                <Text className="text-xs font-black text-amber-400 uppercase tracking-wider">
+            <View className="w-full flex-row items-center justify-between gap-2.5 rounded-2xl bg-amber-500/15 border border-amber-500/40 p-3 sm:p-4">
+              <View className="flex-1 min-w-0 pr-1">
+                <Text className="text-[10px] sm:text-xs font-black text-amber-400 uppercase tracking-wider" numberOfLines={1}>
                   CALLER DISCONNECTED / OUT OF CALL
                 </Text>
-                <Text className="text-xs font-medium text-zinc-300 mt-0.5">
+                <Text className="text-[10px] sm:text-xs font-medium text-zinc-300 mt-0.5 leading-tight">
                   Caller left or disconnected. You can reconnect at any time.
                 </Text>
               </View>
@@ -238,6 +244,8 @@ export default function ResponderLiveCall() {
                 variant="gold"
                 size="sm"
                 onPress={reconnect}
+                textClassName="text-[10px] sm:text-xs font-black"
+                className="px-2.5 sm:px-4 py-1.5 sm:py-2 flex-shrink-0"
               />
             </View>
           ) : null}
@@ -265,22 +273,22 @@ export default function ResponderLiveCall() {
           <View className="w-full gap-2">
             <Pressable
               onPress={() => router.push('/responder/map')}
-              className="w-full flex-row items-center justify-between bg-emerald-500/15 border border-emerald-500/40 rounded-2xl p-3.5 active:scale-98"
+              className="w-full flex-row items-center justify-between bg-emerald-500/15 border border-emerald-500/40 rounded-2xl p-2.5 sm:p-3.5 active:scale-98"
             >
-              <View className="flex-row items-center gap-3">
-                <View className="p-2 rounded-xl bg-emerald-500/20">
+              <View className="flex-row items-center gap-2 sm:gap-3 flex-1 min-w-0 pr-2">
+                <View className="p-1.5 sm:p-2 rounded-xl bg-emerald-500/20 flex-shrink-0">
                   <Maximize2 size={16} color="#10B981" />
                 </View>
-                <View>
-                  <Text className="text-xs font-black text-white uppercase">
+                <View className="flex-1 min-w-0">
+                  <Text className="text-[11px] sm:text-xs md:text-sm font-black text-white uppercase" numberOfLines={1}>
                     EXPAND FULL SCREEN GPS DISPATCH MAP
                   </Text>
-                  <Text className="text-[11px] font-medium text-emerald-300">
+                  <Text className="text-[9px] sm:text-[11px] font-medium text-emerald-300" numberOfLines={1}>
                     Big display map with floating caller live video feed
                   </Text>
                 </View>
               </View>
-              <ArrowRight size={16} color="#10B981" />
+              <ArrowRight size={16} color="#10B981" className="flex-shrink-0" />
             </Pressable>
 
             <LiveMapView
@@ -310,41 +318,41 @@ export default function ResponderLiveCall() {
           />
 
           {/* Real-time AI Updates During Call */}
-          <View className="gap-3 rounded-3xl bg-[#18181B] border border-sky-500/30 p-5 shadow-sm">
+          <View className="gap-2.5 sm:gap-3 rounded-3xl bg-[#18181B] border border-sky-500/30 p-3.5 sm:p-5 shadow-sm">
             <View className="flex-row items-center gap-2">
-              <Sparkles size={20} color="#38BDF8" />
-              <Text className="text-xs font-black uppercase tracking-wider text-sky-400">
+              <Sparkles size={18} color="#38BDF8" />
+              <Text className="text-[10px] sm:text-xs font-black uppercase tracking-wider text-sky-400">
                 AI REAL-TIME ASSISTANT
               </Text>
             </View>
 
-            <View className="gap-2 rounded-2xl bg-[#09090B] p-4 border border-[#27272A]">
-              <View className="flex-row items-center justify-between">
+            <View className="gap-1.5 sm:gap-2 rounded-2xl bg-[#09090B] p-3 sm:p-4 border border-[#27272A]">
+              <View className="flex-row items-center justify-between flex-wrap gap-1">
                 <View className="flex-row items-center gap-1.5">
-                  <Check size={16} color="#10B981" />
-                  <Text className="text-xs font-black text-emerald-400 uppercase">
+                  <Check size={14} color="#10B981" />
+                  <Text className="text-[10px] sm:text-xs font-black text-emerald-400 uppercase">
                     Assigned Station & Location
                   </Text>
                 </View>
                 {Boolean(activeIncident?.distance_km || activeIncident?.eta_minutes) ? (
-                  <Text className="text-xs font-bold text-sky-400">
+                  <Text className="text-[10px] sm:text-xs font-bold text-sky-400">
                     {activeIncident?.distance_km ? `${activeIncident.distance_km} km` : ''} {activeIncident?.eta_minutes ? `(ETA: ${activeIncident.eta_minutes}m)` : ''}
                   </Text>
                 ) : null}
               </View>
-              <Text className="text-sm font-extrabold text-white">
+              <Text className="text-xs sm:text-sm font-extrabold text-white" numberOfLines={1}>
                 {activeIncident?.department_name || activeIncident?.station_name || 'Emergency Unit'}
               </Text>
-              <Text className="text-xs text-zinc-400 font-medium">
+              <Text className="text-[10px] sm:text-xs text-zinc-400 font-medium" numberOfLines={1}>
                 {activeIncident?.station_name || 'Station Unit'} • {activeIncident?.location || 'Caller Location'}
               </Text>
             </View>
 
-            <View className="gap-1 pt-1">
-              <Text className="text-xs font-extrabold text-zinc-500 uppercase tracking-wider">
+            <View className="gap-1 pt-0.5">
+              <Text className="text-[10px] sm:text-xs font-extrabold text-zinc-500 uppercase tracking-wider">
                 Live Summary Brief
               </Text>
-              <Text className="text-xs text-zinc-300 leading-relaxed font-medium">
+              <Text className="text-xs sm:text-sm text-zinc-300 leading-relaxed font-medium" numberOfLines={3}>
                 {activeIncident?.summary || activeIncident?.description || activeIncident?.transcript || 'Emergency incident in progress.'}
               </Text>
             </View>
@@ -352,23 +360,25 @@ export default function ResponderLiveCall() {
         </View>
 
         {/* End Response Controls */}
-        <View className="w-full gap-3 pt-4">
+        <View className="w-full gap-2.5 sm:gap-3 pt-2 sm:pt-4">
           <Button
             title="RESOLVE & END INCIDENT RESPONSE"
             variant="primary"
             size="lg"
-            icon={<Check size={20} color="#FFFFFF" />}
+            icon={<Check size={18} color="#FFFFFF" />}
             onPress={handleResolveResponse}
-            className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500"
+            textClassName="text-[11px] sm:text-xs md:text-sm font-black"
+            className="w-full py-3 sm:py-3.5 px-3 sm:px-4 bg-emerald-600 hover:bg-emerald-500"
           />
 
           <Button
             title="REJECT / RE-QUEUE CALLER (CANNOT ASSIST)"
             variant="danger"
             size="lg"
-            icon={<PhoneOff size={20} color="#FFFFFF" />}
+            icon={<PhoneOff size={18} color="#FFFFFF" />}
             onPress={handleRejectOrRequeueCaller}
-            className="w-full py-3.5 border border-rose-500/50 bg-rose-500/20"
+            textClassName="text-[11px] sm:text-xs md:text-sm font-black"
+            className="w-full py-3 sm:py-3.5 px-3 sm:px-4 border border-rose-500/50 bg-rose-500/20"
           />
         </View>
       </View>

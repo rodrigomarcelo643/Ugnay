@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Pressable, StyleSheet, useWindowDimensions } from 'react-native';
 import { Video, VideoOff, Mic, MicOff, Sparkles, Volume2, VolumeX, AlertTriangle } from 'lucide-react-native';
 import type { ICameraVideoTrack, IAgoraRTCRemoteUser } from 'agora-rtc-sdk-ng';
 
@@ -95,6 +95,14 @@ export const LiveVideoBox: React.FC<LiveVideoBoxProps> = ({
     }
   }, [localVideoTrack, isVideoOn, isDOM]);
 
+  const { width: windowWidth } = useWindowDimensions();
+  const isSmallMobile = windowWidth < 360;
+  const isMediumMobile = windowWidth >= 360 && windowWidth < 768;
+
+  const videoFrameHeight = isSmallMobile ? 260 : isMediumMobile ? 320 : 400;
+  const pipWidth = isSmallMobile ? 84 : isMediumMobile ? 100 : 115;
+  const pipHeight = isSmallMobile ? 112 : isMediumMobile ? 135 : 155;
+
   const activeLevel = Math.max(audioLevel, remoteAudioLevel);
   const isSpeaking = activeLevel > 10;
   const hasRemoteVideo = Boolean(remoteUser?.hasVideo && remoteUser?.videoTrack);
@@ -111,30 +119,34 @@ export const LiveVideoBox: React.FC<LiveVideoBoxProps> = ({
         </View>
       ) : null}
 
-
-
       {/* Header Info Bar */}
       <View style={styles.topBadgeRow}>
         <View style={styles.labelGroup}>
           <View style={[styles.statusDot, { backgroundColor: isSpeaking ? '#10B981' : accentColor }]} />
-          <Text style={styles.labelText}>{label}</Text>
+          <Text
+            style={[styles.labelText, { fontSize: isSmallMobile ? 10.5 : 12 }]}
+            numberOfLines={1}
+            ellipsizeMode="tail"
+          >
+            {label}
+          </Text>
         </View>
         {isSpeaking ? (
           <View style={styles.speakingPill}>
-            <Sparkles size={11} color="#10B981" />
-            <Text style={styles.speakingText}>
-              {remoteAudioLevel > 10 ? 'REMOTE VOICE LIVE' : `MIC ACTIVE (${audioLevel}%)`}
+            <Sparkles size={isSmallMobile ? 9 : 11} color="#10B981" />
+            <Text style={[styles.speakingText, { fontSize: isSmallMobile ? 8 : 9 }]} numberOfLines={1}>
+              {remoteAudioLevel > 10 ? 'REMOTE VOICE' : `MIC ACTIVE (${audioLevel}%)`}
             </Text>
           </View>
         ) : (
-          <Text style={styles.standbyText}>
-            {isMuted ? 'MIC MUTED' : remoteUser ? 'VOICE CONNECTED' : 'WAITING PEER'}
+          <Text style={[styles.standbyText, { fontSize: isSmallMobile ? 9 : 10 }]} numberOfLines={1}>
+            {isMuted ? 'MIC MUTED' : remoteUser ? 'CONNECTED' : 'WAITING PEER'}
           </Text>
         )}
       </View>
 
       {/* MAIN UNIFIED VIDEO FRAME */}
-      <View style={[styles.singleVideoFrame, { borderColor: isSpeaking ? '#10B981' : '#27272A' }]}>
+      <View style={[styles.singleVideoFrame, { height: videoFrameHeight, borderColor: isSpeaking ? '#10B981' : '#27272A' }]}>
         {/* Remote Peer Video Stream or Avatar Placeholder */}
         {isDOM && hasRemoteVideo ? (
           <div
@@ -152,8 +164,10 @@ export const LiveVideoBox: React.FC<LiveVideoBoxProps> = ({
             <View style={[styles.avatarCircle, { backgroundColor: accentColor + '20', borderColor: accentColor }]}>
               <Text style={[styles.avatarText, { color: accentColor }]}>{label.charAt(0)}</Text>
             </View>
-            <Text style={styles.placeholderTitle}>{label}</Text>
-            <Text style={styles.placeholderSub}>
+            <Text style={[styles.placeholderTitle, { fontSize: isSmallMobile ? 13 : 14 }]} numberOfLines={1}>
+              {label}
+            </Text>
+            <Text style={[styles.placeholderSub, { fontSize: isSmallMobile ? 10 : 11 }]} numberOfLines={1}>
               {remoteUser ? 'Agora RTC Audio Connected' : 'Waiting for Remote Peer to Join...'}
             </Text>
           </View>
@@ -161,7 +175,7 @@ export const LiveVideoBox: React.FC<LiveVideoBoxProps> = ({
 
         {/* Local PIP Video Frame */}
         {isDOM && isVideoOn && localVideoTrack ? (
-          <View style={styles.pipFrame}>
+          <View style={[styles.pipFrame, { width: pipWidth, height: pipHeight }]}>
             <div
               ref={setLocalDivRef as any}
               style={{
@@ -200,7 +214,13 @@ export const LiveVideoBox: React.FC<LiveVideoBoxProps> = ({
               );
             })}
           </View>
-          <Text style={styles.sublabel}>{sublabel}</Text>
+          <Text
+            style={[styles.sublabel, { fontSize: isSmallMobile ? 9 : 10, maxWidth: isSmallMobile ? '65%' : '75%' }]}
+            numberOfLines={1}
+            ellipsizeMode="tail"
+          >
+            {sublabel}
+          </Text>
         </View>
       </View>
 
@@ -209,29 +229,61 @@ export const LiveVideoBox: React.FC<LiveVideoBoxProps> = ({
         {Boolean(onToggleVideo) ? (
           <Pressable
             onPress={onToggleVideo}
-            style={[styles.controlBtn, isVideoOn ? styles.btnActive : styles.btnInactive]}
+            style={[
+              styles.controlBtn,
+              isVideoOn ? styles.btnActive : styles.btnInactive,
+              { paddingVertical: isSmallMobile ? 7 : 9 },
+            ]}
           >
-            {isVideoOn ? <Video size={16} color="#FFFFFF" /> : <VideoOff size={16} color="#F43F5E" />}
-            <Text style={styles.controlBtnText}>{isVideoOn ? 'Cam ON' : 'Cam OFF'}</Text>
+            {isVideoOn ? (
+              <Video size={isSmallMobile ? 14 : 16} color="#FFFFFF" />
+            ) : (
+              <VideoOff size={isSmallMobile ? 14 : 16} color="#F43F5E" />
+            )}
+            <Text style={[styles.controlBtnText, { fontSize: isSmallMobile ? 9.5 : 11 }]} numberOfLines={1}>
+              {isSmallMobile ? (isVideoOn ? 'Cam' : 'No Cam') : (isVideoOn ? 'Cam ON' : 'Cam OFF')}
+            </Text>
           </Pressable>
         ) : null}
 
         {Boolean(onToggleMute) ? (
           <Pressable
             onPress={onToggleMute}
-            style={[styles.controlBtn, !isMuted ? styles.btnActive : styles.btnInactive]}
+            style={[
+              styles.controlBtn,
+              !isMuted ? styles.btnActive : styles.btnInactive,
+              { paddingVertical: isSmallMobile ? 7 : 9 },
+            ]}
           >
-            {!isMuted ? <Mic size={16} color="#FFFFFF" /> : <MicOff size={16} color="#F43F5E" />}
-            <Text style={styles.controlBtnText}>{!isMuted ? 'Mic ON' : 'Muted'}</Text>
+            {!isMuted ? (
+              <Mic size={isSmallMobile ? 14 : 16} color="#FFFFFF" />
+            ) : (
+              <MicOff size={isSmallMobile ? 14 : 16} color="#F43F5E" />
+            )}
+            <Text style={[styles.controlBtnText, { fontSize: isSmallMobile ? 9.5 : 11 }]} numberOfLines={1}>
+              {!isMuted ? 'Mic ON' : 'Muted'}
+            </Text>
           </Pressable>
         ) : null}
 
         <Pressable
           onPress={() => setIsSpeakerMuted(!isSpeakerMuted)}
-          style={[styles.controlBtn, !isSpeakerMuted ? styles.btnActive : styles.btnInactive]}
+          style={[
+            styles.controlBtn,
+            !isSpeakerMuted ? styles.btnActive : styles.btnInactive,
+            { paddingVertical: isSmallMobile ? 7 : 9 },
+          ]}
         >
-          {!isSpeakerMuted ? <Volume2 size={16} color="#FFFFFF" /> : <VolumeX size={16} color="#F43F5E" />}
-          <Text style={styles.controlBtnText}>{!isSpeakerMuted ? 'Speaker ON' : 'Speaker MUTED'}</Text>
+          {!isSpeakerMuted ? (
+            <Volume2 size={isSmallMobile ? 14 : 16} color="#FFFFFF" />
+          ) : (
+            <VolumeX size={isSmallMobile ? 14 : 16} color="#F43F5E" />
+          )}
+          <Text style={[styles.controlBtnText, { fontSize: isSmallMobile ? 9.5 : 11 }]} numberOfLines={1}>
+            {isSmallMobile
+              ? (!isSpeakerMuted ? 'Spk' : 'Silent')
+              : (!isSpeakerMuted ? 'Speaker' : 'Spk Muted')}
+          </Text>
         </Pressable>
       </View>
     </View>

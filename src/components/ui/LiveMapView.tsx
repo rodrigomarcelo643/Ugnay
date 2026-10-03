@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { View, Text, StyleSheet, Pressable, DimensionValue, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, Pressable, DimensionValue, ActivityIndicator, useWindowDimensions } from 'react-native';
 import {
   MapPin,
   Navigation,
@@ -335,10 +335,14 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({
     isPingingRadar,
   ]);
 
+  const { width: windowWidth } = useWindowDimensions();
+  const isSmall = windowWidth < 360;
+  const responsiveMapHeight = mapHeight || (isSmall ? 190 : 220);
+
   return (
     <View style={styles.container}>
       {/* Geocoded Address Card Banner */}
-      <View style={styles.addressCard}>
+      <View style={[styles.addressCard, { padding: isSmall ? 10 : 12 }]}>
         {role === 'CALLER' ? (
           <>
             <View style={styles.addressRow}>
@@ -420,35 +424,55 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({
       <View style={styles.controlsBar}>
         <Pressable
           onPress={() => setShowIsochrones(!showIsochrones)}
-          style={[styles.controlPill, showIsochrones && styles.controlPillActive]}
+          style={[
+            styles.controlPill,
+            showIsochrones && styles.controlPillActive,
+            { paddingHorizontal: isSmall ? 7 : 10, paddingVertical: isSmall ? 5 : 6 },
+          ]}
         >
-          <Layers size={13} color={showIsochrones ? '#10B981' : '#94A3B8'} />
-          <Text style={[styles.controlPillText, showIsochrones && styles.controlPillTextActive]}>
-            {showIsochrones ? 'ISOCHRONES: 3M/5M/10M ON' : 'ISOCHRONES: OFF'}
+          <Layers size={isSmall ? 11 : 13} color={showIsochrones ? '#10B981' : '#94A3B8'} />
+          <Text
+            style={[
+              styles.controlPillText,
+              showIsochrones && styles.controlPillTextActive,
+              { fontSize: isSmall ? 9 : 10 },
+            ]}
+          >
+            {showIsochrones ? (isSmall ? 'ISOCHRONES: ON' : 'ISOCHRONES: 3M/5M/10M ON') : 'ISOCHRONES: OFF'}
           </Text>
         </Pressable>
 
         <Pressable
           onPress={() => setShowRoute(!showRoute)}
-          style={[styles.controlPill, showRoute && styles.controlPillActiveBlue]}
+          style={[
+            styles.controlPill,
+            showRoute && styles.controlPillActiveBlue,
+            { paddingHorizontal: isSmall ? 7 : 10, paddingVertical: isSmall ? 5 : 6 },
+          ]}
         >
-          <Route size={13} color={showRoute ? '#38BDF8' : '#94A3B8'} />
-          <Text style={[styles.controlPillText, showRoute && styles.controlPillTextActiveBlue]}>
-            {showRoute ? 'ROUTE: ACTIVE' : 'ROUTE: HIDDEN'}
+          <Route size={isSmall ? 11 : 13} color={showRoute ? '#38BDF8' : '#94A3B8'} />
+          <Text
+            style={[
+              styles.controlPillText,
+              showRoute && styles.controlPillTextActiveBlue,
+              { fontSize: isSmall ? 9 : 10 },
+            ]}
+          >
+            {showRoute ? (isSmall ? 'ROUTE: ON' : 'ROUTE: ACTIVE') : (isSmall ? 'ROUTE: OFF' : 'ROUTE: HIDDEN')}
           </Text>
         </Pressable>
 
-        <Pressable onPress={fetchRoutingData} style={styles.iconButton}>
+        <Pressable onPress={fetchRoutingData} style={[styles.iconButton, { padding: isSmall ? 6 : 8 }]}>
           {isLoadingRoute ? (
             <ActivityIndicator size="small" color="#38BDF8" />
           ) : (
-            <RefreshCw size={13} color="#94A3B8" />
+            <RefreshCw size={isSmall ? 11 : 13} color="#94A3B8" />
           )}
         </Pressable>
       </View>
 
       {/* Lightweight Leaflet + OpenStreetMap Map Container */}
-      <View style={[styles.mapFrame, mapHeight ? { height: mapHeight } : null]}>
+      <View style={[styles.mapFrame, { height: responsiveMapHeight }]}>
         <iframe
           title="UGNAY OpenRouteService & Leaflet Map"
           width="100%"
@@ -460,15 +484,15 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({
 
         {/* Floating Top Route Info Badge with Live Caller Ping Pill */}
         <View style={styles.topBadgeOverlay}>
-          <View style={styles.callerPingBadge}>
-            <AnimatedCallerPingIcon size={14} color="#38BDF8" pingColor="rgba(56, 189, 248, 0.8)" />
-            <Text style={styles.callerPingBadgeText} numberOfLines={1}>
-              {isPingingRadar ? 'RADAR ACTIVE • SCANNING NEARBY' : `ORS • ${resolvedCallerAddress.split(',')[0]}`}
+          <View style={[styles.callerPingBadge, { maxWidth: isSmall ? '58%' : '65%' }]}>
+            <AnimatedCallerPingIcon size={13} color="#38BDF8" pingColor="rgba(56, 189, 248, 0.8)" />
+            <Text style={[styles.callerPingBadgeText, { fontSize: isSmall ? 8 : 9 }]} numberOfLines={1}>
+              {isPingingRadar ? 'RADAR ACTIVE • SCANNING' : `ORS • ${resolvedCallerAddress.split(',')[0]}`}
             </Text>
           </View>
           <View style={styles.etaPill}>
-            <Route size={12} color="#10B981" />
-            <Text style={styles.etaPillText} numberOfLines={1}>
+            <Route size={11} color="#10B981" />
+            <Text style={[styles.etaPillText, { fontSize: isSmall ? 8 : 9 }]} numberOfLines={1}>
               {activeDistance} km • {activeEta}m ETA
             </Text>
           </View>
@@ -477,9 +501,9 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({
         {/* Floating Bottom Status Pill */}
         <View style={styles.bottomPillOverlay}>
           <View style={styles.techBadge}>
-            <Sparkles size={11} color="#38BDF8" />
+            <Sparkles size={10} color="#38BDF8" />
             <Text style={styles.techBadgeText}>
-              OPENROUTESERVICE & LEAFLET OSM
+              {isSmall ? 'LEAFLET OSM' : 'OPENROUTESERVICE & LEAFLET OSM'}
             </Text>
           </View>
           {showIsochrones && (
