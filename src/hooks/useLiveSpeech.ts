@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { Platform } from 'react-native';
 import { sanitizeTranscript } from '@/services/ai';
 import { useIncidentStore } from '@/store/incidentStore';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Platform } from 'react-native';
 
 const OPENAI_KEY =
   process.env.EXPO_PUBLIC_OPENAI_KEY ||
@@ -18,6 +18,7 @@ export interface UseLiveSpeechReturn {
   hasPermission: boolean | null;
   error: string | null;
   language: string;
+  isOpenAIActive: boolean;
   setLanguage: (lang: string) => void;
   requestMicPermission: () => Promise<boolean>;
   startListening: () => void;
@@ -45,16 +46,16 @@ export function useLiveSpeech(
   const animFrameRef = useRef<number | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const mediaRecorderRef = useRef<any>(null);
-  const recordedChunksRef = useRef<Blob[]>([]);
   const isWhisperTranscribingRef = useRef<boolean>(false);
   const hasSpokenRecentlyRef = useRef<boolean>(false);
-  const speechEnergyDetectedRef = useRef<boolean>(false);
   const silenceFlushTimerRef = useRef<any>(null);
   const nativeRecordingRef = useRef<any>(null);
   const restartTimeoutRef = useRef<any>(null);
   const isStartingRef = useRef<boolean>(false);
+  const lastTranscriptRef = useRef<{ text: string; timestamp: number }>({ text: '', timestamp: 0 });
 
   const isMicSupported = true;
+  const isOpenAIActive = Boolean(OPENAI_KEY && OPENAI_KEY.startsWith('sk-'));
 
   const onTranscriptUpdateRef = useRef(onTranscriptUpdate);
   useEffect(() => {
@@ -66,17 +67,182 @@ export function useLiveSpeech(
     onSpeechStartRef.current = onSpeechStart;
   }, [onSpeechStart]);
 
+  /**
+   * Unified transcript emitter with sanitization and duplicate suppression
+   */
+  const emitTranscript = useCallback((text: string) => {
+    const cleaned = sanitizeTranscript(text);
+    if (!cleaned || cleaned.length < 2) return;
+
+    const now = Date.now();
+    const last = lastTranscriptRef.current;
+    const isDuplicate =
+      last.text.toLowerCase() === cleaned.toLowerCase() &&
+      now - last.timestamp < 3500;
+
+    if (isDuplicate) return;
+
+    lastTranscriptRef.current = { text: cleaned, timestamp: now };
+    setTranscript((prev) => (prev ? `${prev} ${cleaned}` : cleaned));
+    setInterimTranscript('');
+    if (onTranscriptUpdateRef.current) {
+      onTranscriptUpdateRef.current(cleaned);
+    }
+  }, []);
+
+  /**
+   * Transcribe recorded audio with OpenAI Whisper API
+   */
+  const transcribeWithOpenAIWhisper = useCallback(
+    async (audioInput: any): Promise<string> => {
+      if (!OPENAI_KEY || !audioInput) return '';
+
+      try {
+        const formData = new FormData();
+        if (Platform.OS === 'web') {
+          const blobType = (audioInput.type || '').toLowerCase();
+          let filename = 'speech.webm';
+          if (blobType.includes('mp4') || blobType.includes('aac')) {
+            filename = 'speech.mp4';
+          } else if (blobType.includes('m4a')) {
+            filename = 'speech.m4a';
+          } else if (blobType.includes('wav')) {
+            filename = 'speech.wav';
+          } else if (blobType.includes('ogg')) {
+            filename = 'speech.ogg';
+          }
+          formData.append('file', audioInput, filename);
+        } else {
+          formData.append('file', {
+            uri: audioInput,
+            name: 'speech.m4a',
+            type: 'audio/m4a',
+          } as any);
+        }
+
+        formData.append('model', 'whisper-1');
+        formData.append('temperature', '0.0');
+
+        const storeLang = useIncidentStore.getState().selectedLanguage;
+        if (storeLang?.includes('Tagalog') || storeLang?.includes('Filipino')) {
+          formData.append('language', 'tl');
+        }
+
+        const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${OPENAI_KEY}`,
+          },
+          body: formData,
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          const rawText = (data.text || '').trim();
+          console.log('[Whisper AI Transcription]:', rawText);
+
+          // Discard silence & YouTube outro hallucination patterns
+          const normalizedCheck = rawText.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
+          if (
+            /[\u0400-\u04FF\u4E00-\u9FFF\u0600-\u06FF]/.test(rawText) ||
+            /(?:дякуємо|перегляд|спасибо|subtitles by|amara\.org|youtube)/i.test(rawText) ||
+            /^(?:thank\s+you(?:\s+for\s+watching)?|thanks(?:\s+for\s+watching)?|thank\s+you\s+very\s+much|watching|bye|goodbye|see\s+you)$/i.test(normalizedCheck) ||
+            /(?:thank\s+you\s+for\s+watching|thanks\s+for\s+watching|subscribe\s+to|like\s+and\s+subscribe)/i.test(rawText)
+          ) {
+            console.log('[Whisper AI] Ignored silence outro artifact:', rawText);
+            return '';
+          }
+
+          // Strip any hallucinated trailing outro from real speech
+          let filteredText = rawText.replace(/(?:,?\s*thank\s+you(?:\s+for\s+watching)?[\.\!\?]*)+$/gi, '').trim();
+          if (!filteredText || filteredText.length < 2) {
+            return '';
+          }
+
+          emitTranscript(filteredText);
+          return filteredText;
+        } else {
+          const errData = await res.json().catch(() => ({}));
+          console.warn('[Whisper API Response Notice]:', res.status, errData);
+        }
+      } catch (e) {
+        console.warn('[Whisper Transcription Error]:', e);
+      }
+      return '';
+    },
+    [emitTranscript]
+  );
+
+  /**
+   * Instantiates and starts a fresh MediaRecorder instance on stream
+   */
+  const createAndStartMediaRecorder = useCallback(
+    (stream: MediaStream) => {
+      if (typeof window === 'undefined' || !(window as any).MediaRecorder) return null;
+      if (!stream || !stream.active) return null;
+
+      try {
+        const MediaRec = (window as any).MediaRecorder;
+        let mime = '';
+        if (MediaRec.isTypeSupported('audio/webm;codecs=opus')) {
+          mime = 'audio/webm;codecs=opus';
+        } else if (MediaRec.isTypeSupported('audio/webm')) {
+          mime = 'audio/webm';
+        } else if (MediaRec.isTypeSupported('audio/mp4')) {
+          mime = 'audio/mp4';
+        } else if (MediaRec.isTypeSupported('audio/aac')) {
+          mime = 'audio/aac';
+        }
+
+        const options = mime ? { mimeType: mime } : undefined;
+        const recorder = options ? new MediaRec(stream, options) : new MediaRec(stream);
+        let localChunks: Blob[] = [];
+
+        recorder.ondataavailable = (evt: any) => {
+          if (evt.data && evt.data.size > 0) {
+            localChunks.push(evt.data);
+          }
+        };
+
+        recorder.onstop = async () => {
+          const chunks = [...localChunks];
+          localChunks = [];
+          if (chunks.length > 0 && !isWhisperTranscribingRef.current) {
+            const actualMime = recorder.mimeType || mime || 'audio/webm';
+            const audioBlob = new Blob(chunks, { type: actualMime });
+
+            // Only transcribe if speech was detected and blob contains meaningful audio (>2000 bytes)
+            if (audioBlob.size > 2000) {
+              isWhisperTranscribingRef.current = true;
+              try {
+                await transcribeWithOpenAIWhisper(audioBlob);
+              } finally {
+                isWhisperTranscribingRef.current = false;
+              }
+            }
+          }
+        };
+
+        recorder.start(250);
+        mediaRecorderRef.current = recorder;
+        return recorder;
+      } catch (err) {
+        console.warn('[LiveSpeech] MediaRecorder creation notice:', err);
+        return null;
+      }
+    },
+    [transcribeWithOpenAIWhisper]
+  );
+
   const requestMicPermission = useCallback(async (): Promise<boolean> => {
     try {
       if (Platform.OS === 'web' && typeof navigator !== 'undefined') {
-        // If mediaStream is already active, permission is already verified
         if (mediaStreamRef.current && mediaStreamRef.current.active) {
           setHasPermission(true);
           setError(null);
           return true;
         }
 
-        // Check Permissions API if available
         if (navigator.permissions && navigator.permissions.query) {
           try {
             const status = await navigator.permissions.query({ name: 'microphone' as PermissionName });
@@ -92,9 +258,14 @@ export function useLiveSpeech(
           } catch (pErr) {}
         }
 
-        // Query getUserMedia without instantly killing track
         if (navigator.mediaDevices?.getUserMedia) {
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+            },
+          });
           mediaStreamRef.current = stream;
           setHasPermission(true);
           setError(null);
@@ -104,7 +275,7 @@ export function useLiveSpeech(
         setHasPermission(true);
         return true;
       } else {
-        // Native mobile permission request (expo-av if installed)
+        // Native mobile permission request
         try {
           let Audio: any = null;
           try {
@@ -173,67 +344,23 @@ export function useLiveSpeech(
     try {
       let stream = mediaStreamRef.current;
       if (!stream || !stream.active) {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
         mediaStreamRef.current = stream;
       }
 
-      const hasNativeSpeechRec =
-        typeof window !== 'undefined' &&
-        Boolean((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
+      // Start MediaRecorder for Whisper AI speech capture
+      createAndStartMediaRecorder(stream);
 
-      // Background MediaRecorder for Whisper AI transcription ONLY when native SpeechRecognition is unavailable
-      if (!hasNativeSpeechRec && typeof window !== 'undefined' && (window as any).MediaRecorder) {
-        try {
-          const MediaRec = (window as any).MediaRecorder;
-          let mime = '';
-          if (MediaRec.isTypeSupported('audio/webm;codecs=opus')) {
-            mime = 'audio/webm;codecs=opus';
-          } else if (MediaRec.isTypeSupported('audio/webm')) {
-            mime = 'audio/webm';
-          } else if (MediaRec.isTypeSupported('audio/mp4')) {
-            mime = 'audio/mp4';
-          }
-
-          const recorder = mime ? new MediaRec(stream, { mimeType: mime }) : new MediaRec(stream);
-          mediaRecorderRef.current = recorder;
-          recordedChunksRef.current = [];
-
-          recorder.ondataavailable = (evt: any) => {
-            if (evt.data && evt.data.size > 0) {
-              recordedChunksRef.current.push(evt.data);
-            }
-          };
-
-          recorder.onstop = async () => {
-            const chunks = recordedChunksRef.current;
-            recordedChunksRef.current = [];
-            const hadVoice = speechEnergyDetectedRef.current;
-            speechEnergyDetectedRef.current = false;
-
-            // Only transcribe if actual voice energy (>20%) was observed to avoid silence hallucinations
-            if (chunks.length > 0 && hadVoice && !isWhisperTranscribingRef.current) {
-              const actualMime = recorder.mimeType || 'audio/webm';
-              const audioBlob = new Blob(chunks, { type: actualMime });
-              if (audioBlob.size > 14000) {
-                isWhisperTranscribingRef.current = true;
-                try {
-                  await transcribeWithOpenAIWhisper(audioBlob);
-                } finally {
-                  isWhisperTranscribingRef.current = false;
-                }
-              }
-            }
-          };
-
-          try {
-            recorder.start(1000);
-          } catch (rErr) {}
-        } catch (mErr) {
-          console.warn('[LiveSpeech] MediaRecorder setup notice:', mErr);
-        }
-      }
-
-      const AudioCtx = typeof window !== 'undefined' ? (window.AudioContext || (window as any).webkitAudioContext) : null;
+      const AudioCtx =
+        typeof window !== 'undefined'
+          ? window.AudioContext || (window as any).webkitAudioContext
+          : null;
       if (!AudioCtx) return;
 
       const audioCtx = new AudioCtx();
@@ -262,9 +389,8 @@ export function useLiveSpeech(
         const normalized = Math.min(100, Math.round((avg / 128) * 100));
         setAudioLevel(normalized);
 
-        // Require genuine voice energy (> 20%) to trigger speech detection
-        if (normalized > 20) {
-          speechEnergyDetectedRef.current = true;
+        // Voice Activity Detection (VAD)
+        if (normalized > 12) {
           hasSpokenRecentlyRef.current = true;
           if (silenceFlushTimerRef.current) {
             clearTimeout(silenceFlushTimerRef.current);
@@ -273,26 +399,26 @@ export function useLiveSpeech(
           if (onSpeechStartRef.current) {
             onSpeechStartRef.current();
           }
-        } else if (hasSpokenRecentlyRef.current && normalized < 10) {
-          // User paused speaking: flush recorded audio chunk to Whisper
+        } else if (hasSpokenRecentlyRef.current && normalized < 8) {
+          // Caller paused speaking: wait 380ms then flush recording to Whisper
           if (!silenceFlushTimerRef.current) {
             silenceFlushTimerRef.current = setTimeout(() => {
               hasSpokenRecentlyRef.current = false;
+              silenceFlushTimerRef.current = null;
+
               if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
                 try {
-                  mediaRecorderRef.current.stop();
-                  if (isListeningRef.current && mediaStreamRef.current?.active) {
-                    setTimeout(() => {
-                      if (isListeningRef.current && mediaRecorderRef.current) {
-                        try {
-                          mediaRecorderRef.current.start(1000);
-                        } catch (e) {}
-                      }
-                    }, 200);
-                  }
+                  const currentRec = mediaRecorderRef.current;
+                  mediaRecorderRef.current = null;
+                  currentRec.stop(); // Triggers onstop -> transcribes with Whisper!
                 } catch (e) {}
               }
-            }, 1200);
+
+              // Immediately start fresh MediaRecorder on the active stream for next speech
+              if (isListeningRef.current && mediaStreamRef.current?.active) {
+                createAndStartMediaRecorder(mediaStreamRef.current);
+              }
+            }, 380);
           }
         }
 
@@ -303,59 +429,6 @@ export function useLiveSpeech(
     } catch (err: any) {
       console.warn('Audio analyser notice:', err);
     }
-  };
-
-  /**
-   * OpenAI Whisper API fallback
-   */
-  const transcribeWithOpenAIWhisper = async (audioInput: any): Promise<string> => {
-    if (!OPENAI_KEY || !audioInput) return '';
-
-    try {
-      const formData = new FormData();
-      if (Platform.OS === 'web') {
-        formData.append('file', audioInput, 'speech.webm');
-      } else {
-        formData.append('file', {
-          uri: audioInput,
-          name: 'speech.m4a',
-          type: 'audio/m4a',
-        } as any);
-      }
-      formData.append('model', 'whisper-1');
-      formData.append(
-        'prompt',
-        'UGNAY 911 Emergency Philippines. Tabang, sunog, baha, disgrasya, aksidente, tulong, saklolo, pulis, ambulansya, ospital, pasyente, rescue. Dialects: Bisaya, Cebuano, Tagalog, English.'
-      );
-      formData.append('temperature', '0.0');
-
-      const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${OPENAI_KEY}`,
-        },
-        body: formData,
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        const rawText = data.text || '';
-        if (/[\u0400-\u04FF\u4E00-\u9FFF\u0600-\u06FF]/.test(rawText) || /(?:дякуємо|перегляд|спасибо)/i.test(rawText)) {
-          return '';
-        }
-        const text = sanitizeTranscript(rawText);
-        if (text && text.trim().length > 2) {
-          setTranscript((prev) => (prev ? `${prev} ${text}` : text));
-          if (onTranscriptUpdateRef.current) {
-            onTranscriptUpdateRef.current(text);
-          }
-          return text;
-        }
-      }
-    } catch (e) {
-      console.warn('Whisper API Transcription Error:', e);
-    }
-    return '';
   };
 
   const startListening = useCallback(async () => {
@@ -385,7 +458,6 @@ export function useLiveSpeech(
           (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
         if (SpeechRecognition) {
-          // Cleanly unbind and abort previous recognition instance to prevent collision
           if (recognitionRef.current) {
             const prev = recognitionRef.current;
             recognitionRef.current = null;
@@ -403,13 +475,11 @@ export function useLiveSpeech(
           recognition.continuous = true;
           recognition.interimResults = true;
 
-          // Select BCP-47 language according to active store selection
           const storeLang = useIncidentStore.getState().selectedLanguage;
           let bcp47 = 'fil-PH';
           if (storeLang?.includes('English')) {
             bcp47 = 'en-US';
           } else {
-            // fil-PH supports Philippine phonetics for Bisaya and Tagalog
             bcp47 = 'fil-PH';
           }
           recognition.lang = bcp47;
@@ -444,27 +514,15 @@ export function useLiveSpeech(
               }
             }
 
-            // Propagate interim live speech to interim display only
             if (currentInterim.trim()) {
-              const cleanInterim = sanitizeTranscript(currentInterim);
-              if (cleanInterim) {
-                if (onSpeechStartRef.current) {
-                  onSpeechStartRef.current();
-                }
-                setInterimTranscript(cleanInterim);
+              if (onSpeechStartRef.current) {
+                onSpeechStartRef.current();
               }
+              setInterimTranscript(currentInterim.trim());
             }
 
-            // Propagate finalized sentence
             if (currentFinal.trim()) {
-              const cleaned = sanitizeTranscript(currentFinal);
-              if (cleaned) {
-                setTranscript((prev) => (prev ? `${prev} ${cleaned}` : cleaned));
-                setInterimTranscript('');
-                if (onTranscriptUpdateRef.current) {
-                  onTranscriptUpdateRef.current(cleaned);
-                }
-              }
+              emitTranscript(currentFinal);
             }
           };
 
@@ -473,16 +531,31 @@ export function useLiveSpeech(
             const errType = evt.error;
 
             if (errType === 'not-allowed' || errType === 'service-not-allowed') {
-              setError('Microphone permission blocked. Please allow mic in browser settings.');
-              isListeningRef.current = false;
-              setIsListening(false);
-            } else if (errType === 'network') {
-              // Network error with selected locale: fall back to browser default locale
+              console.warn(`[LiveSpeech] Browser SpeechRecognition restricted (${errType}). Seamlessly using OpenAI Whisper AI.`);
               try {
-                recognition.lang = typeof navigator !== 'undefined' ? (navigator.language || 'en-US') : 'en-US';
+                recognition.abort();
+              } catch (e) {}
+              recognitionRef.current = null;
+
+              if (mediaStreamRef.current && mediaStreamRef.current.active) {
+                isListeningRef.current = true;
+                setIsListening(true);
+                setError(null);
+                if (!mediaRecorderRef.current || mediaRecorderRef.current.state === 'inactive') {
+                  createAndStartMediaRecorder(mediaStreamRef.current);
+                }
+              } else {
+                setError('Microphone permission blocked. Please allow mic in browser settings.');
+                isListeningRef.current = false;
+                setIsListening(false);
+              }
+            } else if (errType === 'network') {
+              try {
+                recognition.lang =
+                  typeof navigator !== 'undefined' ? navigator.language || 'en-US' : 'en-US';
               } catch (e) {}
             } else if (errType === 'no-speech' || errType === 'aborted') {
-              // Expected silence or lifecycle abort — do not spam console or set error
+              // Expected silence or lifecycle events
             } else {
               console.warn('[LiveSpeech] Speech recognition notice:', errType);
             }
@@ -494,19 +567,18 @@ export function useLiveSpeech(
               restartTimeoutRef.current = null;
             }
 
-            // Keep listening continuous if active, with 400ms debounce to avoid rapid abort loops
             if (isListeningRef.current && recognitionRef.current === recognition) {
               restartTimeoutRef.current = setTimeout(() => {
                 if (isListeningRef.current && recognitionRef.current === recognition) {
                   try {
                     recognition.start();
-                  } catch (e) {
-                    // Ignore already started or transitional state
-                  }
+                  } catch (e) {}
                 }
               }, 400);
             } else if (recognitionRef.current === recognition) {
-              setIsListening(false);
+              if (!mediaStreamRef.current?.active) {
+                setIsListening(false);
+              }
             }
           };
 
@@ -514,7 +586,7 @@ export function useLiveSpeech(
           try {
             recognition.start();
           } catch (e: any) {
-            console.warn('SpeechRecognition start error:', e);
+            console.warn('SpeechRecognition start notice:', e);
           }
         } else {
           setIsListening(true);
@@ -558,7 +630,7 @@ export function useLiveSpeech(
     } finally {
       isStartingRef.current = false;
     }
-  }, [requestMicPermission]);
+  }, [requestMicPermission, createAndStartMediaRecorder, emitTranscript]);
 
   const stopListening = useCallback(async () => {
     if (restartTimeoutRef.current) {
@@ -585,16 +657,22 @@ export function useLiveSpeech(
     } else {
       if (nativeRecordingRef.current) {
         try {
-          await nativeRecordingRef.current.stopAndUnloadAsync();
+          const recording = nativeRecordingRef.current;
+          await recording.stopAndUnloadAsync();
+          const uri = recording.getURI();
+          if (uri) {
+            transcribeWithOpenAIWhisper(uri);
+          }
         } catch (e) {}
         nativeRecordingRef.current = null;
       }
     }
-  }, []);
+  }, [transcribeWithOpenAIWhisper]);
 
   const resetTranscript = useCallback(() => {
     setTranscript('');
     setInterimTranscript('');
+    lastTranscriptRef.current = { text: '', timestamp: 0 };
   }, []);
 
   const setLanguage = useCallback((lang: string) => {
@@ -636,6 +714,7 @@ export function useLiveSpeech(
     hasPermission,
     error,
     language,
+    isOpenAIActive,
     setLanguage,
     requestMicPermission,
     startListening,

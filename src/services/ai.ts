@@ -5,7 +5,11 @@
 
 import { IncidentType, Priority } from '@/types/incident';
 
-const OPENAI_KEY = process.env.EXPO_PUBLIC_OPENAI_KEY || '';
+const OPENAI_KEY =
+  process.env.EXPO_PUBLIC_OPENAI_KEY ||
+  process.env.EXPO_PUBLIC_OPENAI_API_KEY ||
+  process.env.OPENAI_API_KEY ||
+  '';
 
 export interface AIAnalysisResult {
   incident_type: IncidentType | 'UNMATCHED';
@@ -168,47 +172,21 @@ export function sanitizeTranscript(text: string): string {
   const rawLower = text.toLowerCase().trim();
   if (rawLower.length < 3) return '';
 
-  // 1. Immediate rejection of degenerate repetition loops & YouTube silence outro artifacts
+  // 1. Rejection of explicit silence outro artifacts & YouTube spam
   if (
-    /(?:\bmga\b\s*){2,}/i.test(text) ||
-    /(?:sa\s+mga\s*){2,}/i.test(text) ||
-    /\b(\w+)(?:\s+\1\b){2,}/i.test(text) ||
-    /\b(\w+\s+\w+)(?:\s+\1){2,}/i.test(text) ||
-    /pagkakataon\s+ng\s+mga/i.test(text) ||
-    /pag-i-report/i.test(text) ||
-    /pag-i-release/i.test(text) ||
-    /covid(?:-19)?/i.test(text) ||
-    /panonood/i.test(text) ||
     /amara\.org/i.test(text) ||
     /subtitles\s+by/i.test(text) ||
-    /pag-i-(?:register|subscribe|comment|share)/i.test(text) ||
-    /mag-(?:i-)?(?:like|subscribe|comment|share)/i.test(text) ||
-    /(?:like\s+at\s+(?:mag-)?share)/i.test(text) ||
-    /(?:like\s+and\s+subscribe)/i.test(text) ||
-    /(?:subscribe\s+to\s+the\s+channel)/i.test(text) ||
-    /youtube\.com/i.test(text)
+    /subscribe\s+to\s+the\s+channel/i.test(text) ||
+    /like\s+and\s+subscribe/i.test(text) ||
+    /youtube\.com/i.test(text) ||
+    /(?:\bmga\b\s*){5,}/i.test(text) ||
+    /^(?:thank\s+you(?:\s+for\s+watching)?|thanks(?:\s+for\s+watching)?|thank\s+you\s+very\s+much|watching|bye|goodbye)[\.\!\?]*$/i.test(text.trim())
   ) {
     return '';
   }
 
-  // 2. Frequency check: if any word occurs 3+ times or > 30% of sentence, reject runaway artifact
-  const initialWords = text.trim().split(/\s+/).filter(Boolean);
-  if (initialWords.length >= 3) {
-    const counts: Record<string, number> = {};
-    for (const w of initialWords) {
-      const cleanW = w.toLowerCase().replace(/[^a-z0-9]/g, '');
-      if (cleanW.length >= 2) {
-        counts[cleanW] = (counts[cleanW] || 0) + 1;
-      }
-    }
-    for (const cnt of Object.values(counts)) {
-      if (cnt >= 3 || cnt / initialWords.length > 0.3) {
-        return '';
-      }
-    }
-  }
-
-  let cleaned = text;
+  // 2. Collapse runaway repetition loops (e.g. 3+ identical words collapsed to 2)
+  let cleaned = text.replace(/\b(\w+)(?:\s+\1\b){2,}/gi, '$1 $1');
 
   // 3. Remove UI / TTS prompt echoes
   const ttsPatterns = [
@@ -244,10 +222,13 @@ export function sanitizeTranscript(text: string): string {
     /(?:[\u0400-\u04FF]+)/g, // Remove Cyrillic script hallucinations (e.g., Дякуємо за перегляд)
     /(?:[\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF]+)/g, // Remove CJK / Hangul hallucinations
     /(?:[\u0600-\u06FF]+)/g, // Remove Arabic script hallucinations
-    /(?:tagalog\s+bisaya\s*)+/gi,
+    /(?:tagalog[,\s]+bisaya[,\s]+cebuano[,\s]+english[\.\!\?]*)[\s]*/gi,
+    /(?:(?:tagalog|bisaya|cebuano|english)[,\s]+){2,}[\.\!\?]*\s*/gi,
+    /ugnay\s+911\s+emergency[^\.\!\n]*[\.\!\n]?/gi,
     /(?:silence\.?\s*)+/gi,
     /(?:thank\s+you\s+for\s+watching[\!\.\?]*\s*)+/gi,
     /(?:thanks\s+for\s+watching[\!\.\?]*\s*)+/gi,
+    /(?:,?\s*thank\s+you(?:\s+for\s+watching)?[\.\!\?]*)+$/gi,
     /(?:subtitles\s+(?:by|created\s+by)[^\.\!\n]+[\.\!\n]?)/gi,
     /(?:translated\s+by[^\.\!\n]+[\.\!\n]?)/gi,
     /(?:amara\.org\s*)+/gi,
@@ -319,8 +300,78 @@ export function sanitizeTranscript(text: string): string {
 
 let currentPlayingAudio: HTMLAudioElement | null = null;
 let currentUtterance: any = null;
+let hasUnlockedAudio = false;
+
+export function unlockAudioAutoplay(): void {
+  if (typeof window === 'undefined' || hasUnlockedAudio) return;
+  try {
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (AudioCtx) {
+      const ctx = new AudioCtx();
+      if (ctx.state === 'suspended') {
+        ctx.resume();
+      }
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      gain.gain.value = 0.0001;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(0);
+      osc.stop(ctx.currentTime + 0.05);
+    }
+
+    if (typeof Audio !== 'undefined') {
+      const silentAudio = new Audio('data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA');
+      silentAudio.play().then(() => {
+        silentAudio.pause();
+      }).catch(() => {});
+    }
+
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.resume();
+    }
+    hasUnlockedAudio = true;
+  } catch (e) {}
+}
+
+if (typeof window !== 'undefined') {
+  const unlockEvents = ['touchstart', 'touchend', 'click', 'keydown'];
+  const listener = () => {
+    unlockAudioAutoplay();
+    unlockEvents.forEach((ev) => window.removeEventListener(ev, listener));
+  };
+  unlockEvents.forEach((ev) => window.addEventListener(ev, listener, { passive: true, once: true }));
+}
 
 export const AIService = {
+  /**
+   * Checks whether OpenAI API key is present and configured.
+   */
+  isOpenAIConfigured(): boolean {
+    return Boolean(OPENAI_KEY && OPENAI_KEY.startsWith('sk-'));
+  },
+
+  /**
+   * Actively queries the OpenAI API to verify the key is valid and alive.
+   */
+  async verifyOpenAIKey(): Promise<{ valid: boolean; message: string }> {
+    if (!OPENAI_KEY || !OPENAI_KEY.startsWith('sk-')) {
+      return { valid: false, message: 'OpenAI API key missing or invalid in environment variables' };
+    }
+    try {
+      const res = await fetch('https://api.openai.com/v1/models', {
+        headers: { Authorization: `Bearer ${OPENAI_KEY}` },
+      });
+      if (res.ok) {
+        return { valid: true, message: 'OpenAI API Key is ACTIVE and Whisper-1 model is ready' };
+      }
+      const err = await res.json().catch(() => ({}));
+      return { valid: false, message: `OpenAI returned status ${res.status}: ${JSON.stringify(err)}` };
+    } catch (e: any) {
+      return { valid: false, message: `Network error verifying OpenAI key: ${e.message}` };
+    }
+  },
+
   /**
    * Immediately stops any ongoing AI speech playback (both HTML5 Audio and Web Speech Synthesis).
    */

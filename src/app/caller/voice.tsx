@@ -10,7 +10,6 @@ import { useIncidentStore } from '@/store/incidentStore';
 import { useRouter } from 'expo-router';
 import {
   AlertTriangle,
-  ArrowRight,
   HeartHandshake,
   Mic,
   PhoneCall,
@@ -19,7 +18,7 @@ import {
   Sparkles,
   Volume2,
   XCircle,
-  Zap,
+  Zap
 } from 'lucide-react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
@@ -38,8 +37,19 @@ export default function CallerVoice() {
 
   const isBusyOnCall = Boolean(activeIncident && activeIncident.id && activeIncident.status === 'LIVE');
 
+  const getInitialComfort = (lang: string) => {
+    if (lang?.includes('Bisaya') || lang?.includes('Cebuano')) {
+      return 'Ako ang imong UGNAY AI gabay. Kalma lang ug ginhawa og lawom. Isulti unsay nahitabo ug asa imong lokasyon.';
+    }
+    if (lang?.includes('Tagalog') || lang?.includes('Filipino')) {
+      return 'Ako ang iyong UGNAY AI gabay. Huminahon po at huminga nang malalim. Sabihin kung ano ang nangyari at ang inyong lokasyon.';
+    }
+    return 'I am your UGNAY AI guide. Take a slow, deep breath. Tell me what is happening and your location.';
+  };
+
   // AI Behavior Observation & Emotional Comfort State
   const [detectedMood, setDetectedMood] = useState<'CALM' | 'PANICKED' | 'LISTENING'>('LISTENING');
+  const [comfortText, setComfortText] = useState<string>(() => getInitialComfort(selectedLanguage));
   const [understoodSituation, setUnderstoodSituation] = useState<string>('');
   const [autoDispatchCountdown, setAutoDispatchCountdown] = useState<number | null>(null);
 
@@ -55,7 +65,7 @@ export default function CallerVoice() {
       stopListeningRef.current();
       setIsListening(false);
 
-      const clean = sanitizeTranscript(finalSpeech) || 'Emergency reported via voice interface';
+      const clean = sanitizeTranscript(finalSpeech) || finalSpeech.trim() || 'Emergency reported via voice interface';
       setSpeechTranscript(clean);
 
       // Provide verbal emotional support and guidance as queuing starts
@@ -64,8 +74,8 @@ export default function CallerVoice() {
       const queuingVoice = isBisaya
         ? 'Giproseso na ang emergency dispatch. Kalma lang palihug ug pabilin sa linya, tabang padulong na.'
         : isTagalog
-        ? 'Pinoproseso na ang emergency dispatch. Huminahon po kayo at manatili sa linya, papunta na ang tulong.'
-        : 'Emergency dispatch is in progress. Please stay calm and remain on the line, help is on the way.';
+          ? 'Pinoproseso na ang emergency dispatch. Huminahon po kayo at manatili sa linya, papunta na ang tulong.'
+          : 'Emergency dispatch is in progress. Please stay calm and remain on the line, help is on the way.';
 
       AIService.speakGreeting(queuingVoice, selectedLanguage);
       router.push('/caller/analyzing');
@@ -88,6 +98,14 @@ export default function CallerVoice() {
         setAutoDispatchCountdown(null);
         setUnderstoodSituation('');
         setDetectedMood('LISTENING');
+
+        const promptDetail =
+          selectedLanguage.includes('Tagalog') || selectedLanguage.includes('Filipino')
+            ? 'Nakikinig ako. Pakisabi po kung anong emergency ang nangyayari (sunog, baha, aksidente, o kailangan ng pulis)?'
+            : selectedLanguage.includes('Bisaya') || selectedLanguage.includes('Cebuano')
+              ? 'Paminaw ko nimo. Isulti palihug kon unsay emergency (sunog, baha, pasyente, o pulis)?'
+              : 'Listening... Please describe the emergency: is it fire, flood, medical, or police?';
+        setComfortText(promptDetail);
         return;
       }
 
@@ -100,11 +118,18 @@ export default function CallerVoice() {
           selectedLanguage.includes('Tagalog') || selectedLanguage.includes('Filipino')
             ? `Huminahon ka, kasama mo ako. Inihahanda ang responde ng ${evaluation.categoryLabel}.`
             : selectedLanguage.includes('Bisaya') || selectedLanguage.includes('Cebuano')
-            ? `Kalma lang palihug, ayaw kalisang. Giproseso na ang responde sa ${evaluation.categoryLabel}.`
-            : `Stay calm, take a deep breath. Coordinating ${evaluation.categoryLabel} rescue units for you now.`;
-        AIService.speakGreeting(comfort, selectedLanguage);
+              ? `Kalma lang palihug, ayaw kalisang. Giproseso na ang responde sa ${evaluation.categoryLabel}.`
+              : `Stay calm, take a deep breath. Coordinating ${evaluation.categoryLabel} rescue units for you now.`;
+        setComfortText(comfort);
       } else {
         setDetectedMood('CALM');
+        const understood =
+          selectedLanguage.includes('Tagalog') || selectedLanguage.includes('Filipino')
+            ? `Naiintindihan ko ang iyong emergency (${evaluation.categoryLabel}). Inihahanda ang dispatch.`
+            : selectedLanguage.includes('Bisaya') || selectedLanguage.includes('Cebuano')
+              ? `Nasabtan nako ang imong report (${evaluation.categoryLabel}). Giproseso na ang emergency dispatch.`
+              : `I understand your report clearly (${evaluation.categoryLabel}). Processing emergency dispatch details now.`;
+        setComfortText(understood);
       }
 
       // Clear any prior timer before starting silence detection
@@ -143,11 +168,6 @@ export default function CallerVoice() {
     [setSpeechTranscript, evaluateUserBehavior, isBusyOnCall]
   );
 
-  const handleSpeechStart = useCallback(() => {
-    // When caller starts talking, immediately stop AI speech so they aren't talking over each other
-    AIService.stopSpeech();
-  }, []);
-
   const {
     isListening: isMicActive,
     transcript: micTranscript,
@@ -157,14 +177,21 @@ export default function CallerVoice() {
     requestMicPermission,
     startListening,
     stopListening,
-  } = useLiveSpeech(handleTranscriptUpdate, handleSpeechStart);
+    isOpenAIActive,
+  } = useLiveSpeech(handleTranscriptUpdate);
 
   stopListeningRef.current = stopListening;
   startListeningRef.current = startListening;
 
   const [isMounted, setIsMounted] = useState(false);
+  const [openAiVerified, setOpenAiVerified] = useState<boolean | null>(null);
+
   useEffect(() => {
     setIsMounted(true);
+    AIService.verifyOpenAIKey().then((res) => {
+      setOpenAiVerified(res.valid);
+      console.log('[UGNAY AI Engine] OpenAI API Key Status:', res.valid ? 'ACTIVE & VERIFIED' : 'FAILED', res.message);
+    });
   }, []);
 
   useEffect(() => {
@@ -185,8 +212,8 @@ export default function CallerVoice() {
     const initialGreeting = isBisaya
       ? 'UGNAY Emergency AI. Paminaw ko nimo. Isulti palihug unsay nahitabo.'
       : isTagalog
-      ? 'UGNAY Emergency AI. Nakikinig ako. Sabihin kung ano ang nangyari.'
-      : 'UGNAY Emergency AI is listening. Please tell me what happened.';
+        ? 'UGNAY Emergency AI. Nakikinig ako. Sabihin kung ano ang nangyari.'
+        : 'UGNAY Emergency AI is listening. Please tell me what happened.';
     AIService.speakGreeting(initialGreeting, selectedLanguage);
 
     return () => {
@@ -231,7 +258,7 @@ export default function CallerVoice() {
     ? 'AI Voice engine disabled during active call...'
     : (interimTranscript
       ? `Hearing you: "${interimTranscript}"`
-      : (sanitizeTranscript(micTranscript) || sanitizeTranscript(speechTranscript) || 'Listening... Speak naturally into your microphone'));
+      : (micTranscript?.trim() || speechTranscript?.trim() || 'Listening... Speak naturally into your microphone'));
 
   return (
     <ScrollView contentContainerClassName="flex-grow items-center justify-between bg-[#09090B] px-4 sm:px-6 py-6 pb-28">
@@ -332,16 +359,14 @@ export default function CallerVoice() {
               <Pressable
                 key={lang.code}
                 onPress={() => setSelectedLanguage(lang.code)}
-                className={`px-3 py-1 rounded-full border ${
-                  selectedLanguage === lang.code
+                className={`px-3 py-1 rounded-full border ${selectedLanguage === lang.code
                     ? 'bg-amber-400/20 border-amber-400'
                     : 'bg-[#18181B] border-[#27272A] active:bg-zinc-800'
-                }`}
+                  }`}
               >
                 <Text
-                  className={`text-[11px] font-bold ${
-                    selectedLanguage === lang.code ? 'text-amber-300' : 'text-zinc-400'
-                  }`}
+                  className={`text-[11px] font-bold ${selectedLanguage === lang.code ? 'text-amber-300' : 'text-zinc-400'
+                    }`}
                 >
                   {lang.label}
                 </Text>
@@ -394,6 +419,21 @@ export default function CallerVoice() {
             </View>
           ) : null}
 
+          {/* AI Comfort Guidance Message */}
+          {comfortText ? (
+            <View className="rounded-2xl bg-sky-500/10 border border-sky-500/30 p-3.5">
+              <Text className="text-xs font-bold text-sky-200 leading-relaxed italic">
+                "{comfortText}"
+              </Text>
+            </View>
+          ) : (
+            <View className="rounded-2xl bg-[#09090B] border border-[#27272A] p-3">
+              <Text className="text-xs font-medium text-zinc-400 leading-relaxed">
+                Speak freely about what happened. The AI observes if you feel frightened or panicked and will de-escalate, soothe, and dispatch automatically.
+              </Text>
+            </View>
+          )}
+
           {/* Hands-Free Auto-Dispatching Countdown Bar */}
           {autoDispatchCountdown !== null && autoDispatchCountdown > 0 ? (
             <View className="flex-row items-center justify-between rounded-xl bg-amber-500/15 border border-amber-500/40 p-3 px-3.5 gap-2 flex-wrap">
@@ -409,27 +449,44 @@ export default function CallerVoice() {
         </View>
 
         {/* Live Speech Stream Display with Typewriter Text */}
-        <View className="w-full gap-2.5 rounded-3xl bg-[#18181B] border border-[#27272A] p-4 px-5">
-          <View className="flex-row items-center justify-between border-b border-[#27272A] pb-2">
-            <View className="flex-row items-center gap-2">
-              <Sparkles size={14} color="#38BDF8" />
-              <Text className="text-xs font-black uppercase tracking-wider text-sky-400">
-                LIVE VOICE TRANSCRIPT
+        <View className="w-full gap-2.5 rounded-3xl bg-[#18181B] border border-[#27272A] p-4 px-4.5">
+          <View className="flex-row items-center justify-between border-b border-[#27272A] pb-2 gap-2">
+            <View className="flex-row items-center gap-1.5 flex-1 min-w-0">
+              <Sparkles size={13} color="#38BDF8" />
+              <Text className="text-[11px] sm:text-xs font-black uppercase tracking-wider text-sky-400" numberOfLines={1}>
+                LIVE TRANSCRIPT
               </Text>
             </View>
-            <Text className="text-[11px] font-bold text-emerald-400">
-              {isMicActive ? 'LISTENING LIVE 🔴' : 'MIC READY 🟢'}
-            </Text>
+            <View className="flex-row items-center gap-1.5 shrink-0">
+              {openAiVerified && (
+                <View className="flex-row items-center gap-0.5 bg-emerald-500/15 border border-emerald-500/30 px-1.5 py-0.5 rounded-full">
+                  <Text className="text-[9px] font-black text-emerald-300">WHISPER ⚡</Text>
+                </View>
+              )}
+              <Text className="text-[10px] font-bold text-emerald-400">
+                {isMicActive ? 'LIVE 🔴' : 'READY 🟢'}
+              </Text>
+            </View>
           </View>
 
           <View className="min-h-[50px] justify-center py-1">
             <TypewriterText
               key={activeText}
               text={`"${activeText}"`}
-              speed={20}
+              speed={6}
               className="text-sm font-extrabold leading-relaxed italic text-white"
             />
           </View>
+        </View>
+
+        {/* Hands-Free Voice-First Dispatch Notice */}
+        <View className="items-center py-2 px-3 bg-[#18181B]/60 border border-[#27272A] rounded-2xl">
+          <Text className="text-center text-xs text-amber-300/90 font-bold leading-relaxed">
+            🎙️ Voice-First Emergency Dispatch
+          </Text>
+          <Text className="text-center text-[11px] text-zinc-400 font-medium mt-0.5">
+            Speak naturally into your microphone. The AI comforts you and auto-dispatches nearest emergency units.
+          </Text>
         </View>
       </View>
     </ScrollView>
