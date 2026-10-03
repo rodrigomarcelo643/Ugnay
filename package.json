@@ -55,6 +55,7 @@
     "android": "cross-env NODE_OPTIONS=--max-old-space-size=8192 expo start --android",
     "ios": "cross-env NODE_OPTIONS=--max-old-space-size=8192 expo start --ios",
     "web": "cross-env NODE_OPTIONS=--max-old-space-size=8192 expo start --web",
+    "build:web": "cross-env NODE_OPTIONS=--max-old-space-size=8192 expo export -p web",
     "lint": "expo lint"
   },
   "private": true
