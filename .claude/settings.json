@@ -1,5 +1,14 @@
 {
+  "projectName": "UGNAY",
+  "projectDescription": "AI-Powered Universal Emergency Response & Multi-Agency Dispatch Platform",
   "enabledPlugins": {
     "expo@claude-plugins-official": true
+  },
+  "context": {
+    "framework": "Expo SDK 57 (React Native)",
+    "styling": "NativeWind (Tailwind CSS)",
+    "backend": "Supabase Realtime & PostgreSQL",
+    "rtc": "Agora RTC & Agora Conversational AI",
+    "languages": ["Tagalog/Filipino", "Cebuano/Bisaya", "English"]
   }
 }
