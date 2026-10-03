@@ -136,4 +136,146 @@ export const AgoraService = {
   createEmergencyChannelName(incidentId: string): string {
     return `ugnay_emergency_${incidentId.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
   },
+
+  /**
+   * Starts Agora Cloud Real-Time Speech-to-Text (RTT) on the active emergency channel.
+   * Requires Agora REST API credentials (Customer Key & Customer Secret).
+   */
+  async startRealTimeTranscription(
+    channelName: string,
+    languages: string[] = ['fil-PH', 'en-US']
+  ): Promise<{ taskId: string; builderToken: string } | null> {
+    const customerKey =
+      process.env.EXPO_PUBLIC_AGORA_CUSTOMER_KEY ||
+      process.env.EXPO_PUBLIC_AGORA_CUSTOMER_ID ||
+      '';
+    const customerSecret =
+      process.env.EXPO_PUBLIC_AGORA_CUSTOMER_SECRET ||
+      '';
+
+    if (!customerKey || !customerSecret || !AGORA_APP_ID) {
+      console.log(
+        '[AgoraService] Agora REST API credentials not configured yet. Live streaming Web Speech active.'
+      );
+      return null;
+    }
+
+    try {
+      const authRaw = `${customerKey}:${customerSecret}`;
+      const basicAuth =
+        typeof btoa !== 'undefined'
+          ? btoa(authRaw)
+          : typeof Buffer !== 'undefined'
+          ? Buffer.from(authRaw).toString('base64')
+          : '';
+      const headers = {
+        'Content-Type': 'application/json',
+        Authorization: `Basic ${basicAuth}`,
+      };
+
+      // Step 1: Acquire builder token
+      const acquireRes = await fetch(
+        `https://api.agora.io/api/speech-to-text/v1/projects/${AGORA_APP_ID}/acquire`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ instanceId: channelName }),
+        }
+      );
+
+      if (!acquireRes.ok) {
+        const errJson = await acquireRes.json().catch(() => ({}));
+        console.warn('[Agora RTT] Acquire failed:', acquireRes.status, errJson);
+        return null;
+      }
+
+      const acquireData = await acquireRes.json();
+      const builderToken = acquireData.tokenName;
+      if (!builderToken) return null;
+
+      // Step 2: Start transcription task
+      const botUid = 9999;
+      const botTokenRes = await this.requestChannelToken(channelName, botUid);
+      const startRes = await fetch(
+        `https://api.agora.io/api/speech-to-text/v1/projects/${AGORA_APP_ID}/tasks?builderToken=${encodeURIComponent(builderToken)}`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            audio: {
+              subscribeConfig: {
+                subscribeMode: 'CHANNEL_MODE',
+              },
+              maxIdleTime: 60,
+            },
+            rtcConfig: {
+              channelName,
+              subBotUid: `${botUid}`,
+              token: botTokenRes.token || undefined,
+            },
+            captionConfig: {
+              languages,
+            },
+          }),
+        }
+      );
+
+      if (startRes.ok) {
+        const startData = await startRes.json();
+        const taskId = startData.taskId || startData.id;
+        console.log('[Agora RTT] Transcription successfully started! TaskId:', taskId);
+        return { taskId, builderToken };
+      } else {
+        const errJson = await startRes.json().catch(() => ({}));
+        console.warn('[Agora RTT] Start task warning:', startRes.status, errJson);
+      }
+    } catch (e) {
+      console.warn('[Agora RTT] Start transcription error:', e);
+    }
+    return null;
+  },
+
+  /**
+   * Parse Agora Real-Time Speech-to-Text stream data packets received via WebRTC data channel
+   */
+  parseStreamMessage(data: Uint8Array | any): { text: string; uid?: number; isFinal?: boolean } | null {
+    try {
+      if (typeof data === 'string') {
+        const parsed = JSON.parse(data);
+        return {
+          text: parsed.text || parsed.transcript || data,
+          uid: parsed.uid,
+          isFinal: parsed.isFinal ?? true,
+        };
+      }
+
+      if (data instanceof Uint8Array || (typeof Buffer !== 'undefined' && Buffer.isBuffer(data))) {
+        const decoder = typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-8') : null;
+        const decoded = decoder ? decoder.decode(data) : Buffer.from(data).toString('utf-8');
+
+        // Check if JSON
+        if (decoded.trim().startsWith('{')) {
+          const parsed = JSON.parse(decoded);
+          const words = parsed.words || parsed.text || '';
+          return {
+            text: typeof words === 'string' ? words : JSON.stringify(words),
+            uid: parsed.uid,
+            isFinal: parsed.isFinal ?? true,
+          };
+        }
+
+        // Plain string fallback
+        if (decoded && decoded.trim().length > 0) {
+          // Strip non-printable protobuf binary control characters if present
+          const clean = decoded.replace(/[\x00-\x1F\x7F-\x9F]/g, ' ').replace(/\s+/g, ' ').trim();
+          if (clean.length > 1) {
+            return { text: clean, isFinal: true };
+          }
+        }
+      }
+    } catch (e) {
+      // Binary packet decode fallback
+    }
+    return null;
+  },
 };

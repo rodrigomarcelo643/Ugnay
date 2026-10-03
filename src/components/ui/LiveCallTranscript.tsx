@@ -17,6 +17,7 @@ interface LiveCallTranscriptProps {
   incidentType?: string;
   location?: string;
   initialReport?: string;
+  agoraTranscript?: { text: string; uid?: number; isFinal?: boolean } | null;
 }
 
 export const LiveCallTranscript: React.FC<LiveCallTranscriptProps> = ({
@@ -28,6 +29,7 @@ export const LiveCallTranscript: React.FC<LiveCallTranscriptProps> = ({
   incidentType = 'EMERGENCY',
   location,
   initialReport,
+  agoraTranscript,
 }) => {
   const [messages, setMessages] = useState<CallMessage[]>([]);
   const [inputText, setInputText] = useState('');
@@ -49,7 +51,7 @@ export const LiveCallTranscript: React.FC<LiveCallTranscriptProps> = ({
     );
   };
 
-  // Auto speech-to-text callback during live call: captures genuine spoken speech from mic
+  // Auto speech-to-text callback during live call: captures genuine spoken speech from mic or Agora RTT
   const handleLiveSpeechChunk = useCallback(
     async (liveText: string) => {
       const cleanText = sanitizeTranscript(liveText);
@@ -69,6 +71,29 @@ export const LiveCallTranscript: React.FC<LiveCallTranscriptProps> = ({
     },
     [incidentId, role, senderName]
   );
+
+  // Consume live streaming transcripts directly from Agora RTT
+  useEffect(() => {
+    if (!agoraTranscript || !agoraTranscript.text) return;
+    const clean = sanitizeTranscript(agoraTranscript.text);
+    if (!clean || clean.length < 2) return;
+
+    // Check if packet belongs to this user or general channel
+    const isThisUser =
+      agoraTranscript.uid === undefined ||
+      (role === 'CALLER' && agoraTranscript.uid === 1001) ||
+      (role === 'RESPONDER' && agoraTranscript.uid === 2002);
+
+    if (agoraTranscript.isFinal === false) {
+      if (isThisUser) {
+        setLiveSpokenText(clean);
+      }
+    } else {
+      if (isThisUser) {
+        handleLiveSpeechChunk(clean);
+      }
+    }
+  }, [agoraTranscript, handleLiveSpeechChunk, role]);
 
   const { isListening, interimTranscript, audioLevel, startListening, stopListening } =
     useLiveSpeech(handleLiveSpeechChunk);

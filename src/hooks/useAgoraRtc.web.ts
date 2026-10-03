@@ -20,6 +20,7 @@ export interface UseAgoraRtcReturn {
   remoteAudioLevel: number;
   mediaError: string | null;
   connectionState: 'connecting' | 'connected' | 'disconnected' | 'failed';
+  streamTranscript: { text: string; uid?: number; isFinal?: boolean } | null;
   toggleMute: () => Promise<void>;
   toggleVideo: () => Promise<void>;
   endCall: () => Promise<void>;
@@ -43,6 +44,7 @@ export function useAgoraRtc(
   const [remoteAudioLevel, setRemoteAudioLevel] = useState(0);
   const [mediaError, setMediaError] = useState<string | null>(null);
   const [connectionState, setConnectionState] = useState<'connecting' | 'connected' | 'disconnected' | 'failed'>('connecting');
+  const [streamTranscript, setStreamTranscript] = useState<{ text: string; uid?: number; isFinal?: boolean } | null>(null);
 
   const clientRef = useRef<IAgoraRTCClient | null>(null);
   const localAudioTrackRef = useRef<IMicrophoneAudioTrack | null>(null);
@@ -99,6 +101,18 @@ export function useAgoraRtc(
           setRemoteUser((prev) => (prev?.uid === user.uid ? null : prev));
         });
 
+        client.on('stream-message', (userUid, data) => {
+          if (!isMounted) return;
+          const parsed = AgoraService.parseStreamMessage(data);
+          if (parsed && parsed.text) {
+            setStreamTranscript({
+              text: parsed.text,
+              uid: Number(userUid) || 0,
+              isFinal: parsed.isFinal ?? true,
+            });
+          }
+        });
+
         client.on('connection-state-change', (curState) => {
           if (!isMounted) return;
           if (curState === 'CONNECTED') setConnectionState('connected');
@@ -141,6 +155,9 @@ export function useAgoraRtc(
         if (!isMounted) return;
         setJoined(true);
         setConnectionState('connected');
+
+        // Automatically start Agora Real-Time Speech-to-Text if credentials configured
+        AgoraService.startRealTimeTranscription(channelName).catch(() => {});
 
         // Create Microphone and Camera tracks with mobile-friendly fallbacks
         let micTrack: IMicrophoneAudioTrack | null = null;
@@ -326,6 +343,7 @@ export function useAgoraRtc(
     remoteAudioLevel,
     mediaError,
     connectionState,
+    streamTranscript,
     toggleMute,
     toggleVideo,
     endCall,

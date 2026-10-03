@@ -35,6 +35,7 @@ export interface UseAgoraRtcReturn {
   remoteAudioLevel: number;
   mediaError: string | null;
   connectionState: 'connecting' | 'connected' | 'disconnected' | 'failed';
+  streamTranscript: { text: string; uid?: number; isFinal?: boolean } | null;
   toggleMute: () => Promise<void>;
   toggleVideo: () => Promise<void>;
   endCall: () => Promise<void>;
@@ -276,6 +277,7 @@ export function useAgoraRtc(
     remoteAudioLevel,
     mediaError,
     connectionState,
+    streamTranscript: null,
     toggleMute,
     toggleVideo,
     endCall,

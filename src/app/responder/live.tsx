@@ -38,6 +38,7 @@ export default function ResponderLiveCall() {
     isCallEnded,
     mediaError,
     connectionState,
+    streamTranscript,
     toggleMute,
     toggleVideo,
     endCall,
@@ -315,6 +316,7 @@ export default function ResponderLiveCall() {
             incidentType={activeIncident.type || 'EMERGENCY'}
             location={activeIncident.caller_address || activeIncident.location}
             initialReport={activeIncident.speech_transcript || activeIncident.description || activeIncident.summary}
+            agoraTranscript={streamTranscript}
           />
 
           {/* Real-time AI Updates During Call */}

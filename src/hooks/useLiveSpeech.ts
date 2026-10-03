@@ -78,7 +78,7 @@ export function useLiveSpeech(
     const last = lastTranscriptRef.current;
     const isDuplicate =
       last.text.toLowerCase() === cleaned.toLowerCase() &&
-      now - last.timestamp < 3500;
+      now - last.timestamp < 1000;
 
     if (isDuplicate) return;
 
@@ -122,6 +122,10 @@ export function useLiveSpeech(
 
         formData.append('model', 'whisper-1');
         formData.append('temperature', '0.0');
+        formData.append(
+          'prompt',
+          'Emergency call: mic check, hello, rescue, tulong, medical, police, fire, Tagalog, English.'
+        );
 
         const storeLang = useIncidentStore.getState().selectedLanguage;
         if (storeLang?.includes('Tagalog') || storeLang?.includes('Filipino')) {
@@ -354,8 +358,14 @@ export function useLiveSpeech(
         mediaStreamRef.current = stream;
       }
 
-      // Start MediaRecorder for Whisper AI speech capture
-      createAndStartMediaRecorder(stream);
+      const hasNativeSpeech =
+        typeof window !== 'undefined' &&
+        Boolean((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
+
+      // Only start MediaRecorder Whisper batch polling if native browser streaming SpeechRecognition is absent
+      if (!hasNativeSpeech) {
+        createAndStartMediaRecorder(stream);
+      }
 
       const AudioCtx =
         typeof window !== 'undefined'
@@ -399,8 +409,8 @@ export function useLiveSpeech(
           if (onSpeechStartRef.current) {
             onSpeechStartRef.current();
           }
-        } else if (hasSpokenRecentlyRef.current && normalized < 8) {
-          // Caller paused speaking: wait 380ms then flush recording to Whisper
+        } else if (!hasNativeSpeech && hasSpokenRecentlyRef.current && normalized < 8) {
+          // Caller paused speaking: wait 380ms then flush recording to Whisper (fallback mode)
           if (!silenceFlushTimerRef.current) {
             silenceFlushTimerRef.current = setTimeout(() => {
               hasSpokenRecentlyRef.current = false;

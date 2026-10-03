@@ -39,6 +39,7 @@ export default function CallerLiveCall() {
     isCallEnded,
     mediaError,
     connectionState,
+    streamTranscript,
     toggleMute,
     toggleVideo,
     endCall,
@@ -394,6 +395,7 @@ export default function CallerLiveCall() {
             incidentType={activeIncident.type || 'EMERGENCY'}
             location={activeIncident.caller_address || activeIncident.location}
             initialReport={activeIncident.speech_transcript || activeIncident.description || activeIncident.summary}
+            agoraTranscript={streamTranscript}
           />
 
           {/* Dynamic Incident Details Brief */}
