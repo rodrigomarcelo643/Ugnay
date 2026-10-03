@@ -60,17 +60,10 @@ export function useAgoraRtc(
       try {
         const AgoraRTCModule = await import('agora-rtc-sdk-ng');
         const AgoraRTC = AgoraRTCModule.default || AgoraRTCModule;
-        try { AgoraRTC.setLogLevel(2); } catch (e) {}
+        try { AgoraRTC.setLogLevel(3); } catch (e) {}
 
         const client = AgoraRTC.createClient({ mode: 'rtc', codec: 'vp8' });
         clientRef.current = client;
-
-        // Set Client Role to host (broadcaster)
-        try {
-          await client.setClientRole('host');
-        } catch (roleErr) {
-          console.warn('[Agora Hook] setClientRole warning:', roleErr);
-        }
 
         client.on('user-published', async (user, mediaType) => {
           if (!isMounted) return;
@@ -238,7 +231,9 @@ export function useAgoraRtc(
         const c = clientRef.current;
         clientRef.current = null;
         try {
-          c.leave().catch(() => {});
+          if (c.connectionState === 'CONNECTED') {
+            c.leave().catch(() => {});
+          }
         } catch (e) {}
       }
     };
