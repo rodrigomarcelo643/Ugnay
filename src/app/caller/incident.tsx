@@ -28,31 +28,34 @@ export default function CallerIncident() {
     setActiveIncident,
     setIsListening,
     resolveAllMissingInfo,
+    resetIncident,
   } = useIncidentStore();
 
   const [incidentHistory, setIncidentHistory] = useState<Incident[]>([]);
   const [showHistoryMenu, setShowHistoryMenu] = useState(false);
 
   useEffect(() => {
-    // Fetch active incidents from Supabase DB
+    // Fetch incidents from Supabase DB
     supabaseService.fetchIncidents().then((incidents) => {
       setIncidentHistory(incidents);
       const activeOnly = incidents.filter((i) => i.status !== 'RESOLVED');
-      if (!activeIncident && activeOnly.length > 0) {
-        setActiveIncident(activeOnly[0]);
-      } else if (activeIncident?.status === 'RESOLVED') {
-        setActiveIncident(null);
+      if (!useIncidentStore.getState().activeIncident) {
+        if (activeOnly.length > 0) {
+          setActiveIncident(activeOnly[0]);
+        } else if (incidents.length > 0) {
+          setActiveIncident(incidents[0]);
+        }
       }
     });
 
-    // Subscribe to realtime updates for responder acceptance
+    // Subscribe to realtime updates for responder acceptance and status changes
     const channel = supabaseService.subscribeToIncidents((updated) => {
       setIncidentHistory(updated);
       const currentActiveId = useIncidentStore.getState().activeIncident?.id;
       if (!currentActiveId) return;
 
       const current = updated.find((i) => i.id === currentActiveId);
-      if (current && (current.status === 'RESPONDER_FOUND' || current.status === 'EN_ROUTE' || current.status === 'LIVE')) {
+      if (current) {
         setActiveIncident(current);
       }
     });
@@ -71,11 +74,13 @@ export default function CallerIncident() {
     );
   }
 
+  const isResolved = activeIncident.status === 'RESOLVED';
   const isAccepted =
-    activeIncident.status === 'RESPONDER_FOUND' ||
-    activeIncident.status === 'EN_ROUTE' ||
-    activeIncident.status === 'LIVE' ||
-    activeIncident.status === 'ON_SCENE';
+    !isResolved &&
+    (activeIncident.status === 'RESPONDER_FOUND' ||
+      activeIncident.status === 'EN_ROUTE' ||
+      activeIncident.status === 'LIVE' ||
+      activeIncident.status === 'ON_SCENE');
 
   const handleActivateVoiceAgain = () => {
     setIsListening(true);
@@ -106,14 +111,14 @@ export default function CallerIncident() {
             <Logo size={36} />
             <View>
               <Text className="text-xs font-bold uppercase tracking-wider text-amber-400">
-                INCIDENT SUMMARY & BRIEF
+                {isResolved ? 'RESOLVED INCIDENT BRIEF' : 'INCIDENT SUMMARY & BRIEF'}
               </Text>
               <Text className="text-base font-black text-white">
                 {activeIncident.id}
               </Text>
             </View>
           </View>
-          <ConnectionStatus status={isAccepted ? 'LIVE' : 'LIVE'} />
+          <ConnectionStatus status={isResolved ? 'CONNECTED' : 'LIVE'} />
         </View>
 
         {/* Previous Reported Incidents History Selector */}
@@ -151,7 +156,9 @@ export default function CallerIncident() {
                         {inc.summary || inc.description}
                       </Text>
                     </View>
-                    <Text className="text-xs font-bold text-amber-400">{inc.status}</Text>
+                    <Text className={`text-xs font-bold ${inc.status === 'RESOLVED' ? 'text-emerald-400' : 'text-amber-400'}`}>
+                      {inc.status}
+                    </Text>
                   </Pressable>
                 ))}
               </View>
@@ -159,8 +166,35 @@ export default function CallerIncident() {
           </View>
         ) : null}
 
-        {/* CALL ACCEPTED & DISPATCHED BANNER (Shown when responder has accepted) */}
-        {isAccepted ? (
+        {/* BANNER: RESOLVED vs CALL ACCEPTED vs STILL QUEUED */}
+        {isResolved ? (
+          <View className="w-full gap-3 rounded-3xl bg-emerald-500/15 border border-emerald-500/40 p-5 shadow-lg">
+            <View className="flex-row items-center justify-between">
+              <View className="flex-row items-center gap-2.5">
+                <View className="w-9 h-9 rounded-full bg-emerald-500/20 items-center justify-center">
+                  <ShieldCheck size={20} color="#10B981" />
+                </View>
+                <View>
+                  <Text className="text-xs font-black uppercase tracking-wider text-emerald-400">
+                    EMERGENCY CALL RESOLVED
+                  </Text>
+                  <Text className="text-sm font-black text-white">
+                    Response Successfully Concluded
+                  </Text>
+                </View>
+              </View>
+              <View className="bg-emerald-500/20 px-3 py-1 rounded-full border border-emerald-500/40">
+                <Text className="text-[10px] font-black text-emerald-300 uppercase">RESOLVED</Text>
+              </View>
+            </View>
+
+            <View className="pt-1">
+              <Text className="text-xs text-zinc-300 leading-relaxed">
+                Emergency response by <Text className="font-bold text-white">{activeIncident.responder_name || activeIncident.department_name || 'Emergency Unit'}</Text> has been successfully concluded. The generated debrief and recorded emergency data are presented below.
+              </Text>
+            </View>
+          </View>
+        ) : isAccepted ? (
           <View className="w-full gap-3 rounded-3xl bg-emerald-500/15 border border-emerald-500/40 p-5 shadow-lg">
             <View className="flex-row items-center justify-between">
               <View className="flex-row items-center gap-2.5">
@@ -223,8 +257,8 @@ export default function CallerIncident() {
         {/* AI Brief Card with Incident Summary */}
         <AIBriefCard incident={activeIncident} />
 
-        {/* Missing Info Prompt Card — VOICE ONLY, NO TYPING */}
-        {hasMissingInfo && !isAccepted ? (
+        {/* Missing Info Prompt Card — VOICE ONLY, NO TYPING (Hidden if resolved or accepted) */}
+        {hasMissingInfo && !isAccepted && !isResolved ? (
           <View className="w-full gap-4 rounded-3xl bg-[#18181B] border border-amber-500/40 p-5 shadow-sm">
             <View className="flex-row items-center justify-between border-b border-[#27272A] pb-3">
               <View className="flex-row items-center gap-2">
@@ -265,7 +299,31 @@ export default function CallerIncident() {
 
         {/* Bottom Navigation */}
         <View className="w-full gap-3 pt-2">
-          {isAccepted ? (
+          {isResolved ? (
+            <>
+              <Button
+                title="RETURN TO HOME DASHBOARD"
+                variant="gold"
+                size="lg"
+                onPress={() => {
+                  resetIncident();
+                  router.push('/caller/home');
+                }}
+                className="w-full py-3.5"
+              />
+              <Button
+                title="START NEW EMERGENCY REPORT"
+                variant="outline"
+                size="lg"
+                icon={<Mic size={18} color="#FBBF24" />}
+                onPress={() => {
+                  resetIncident();
+                  router.push('/caller/voice');
+                }}
+                className="w-full py-3.5"
+              />
+            </>
+          ) : isAccepted ? (
             <Button
               title="RETURN TO LIVE CALL"
               variant="gold"

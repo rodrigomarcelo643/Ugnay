@@ -91,10 +91,10 @@ export default function ResponderLiveCall() {
 
   // Full Incident Resolution: Caller needs satisfied, emergency handled
   const handleResolveResponse = async () => {
-    await endCall();
     if (activeIncident?.id) {
       await supabaseService.updateIncidentStatus(activeIncident.id, 'RESOLVED');
     }
+    await endCall();
     resetIncident();
     router.push('/responder/home');
   };

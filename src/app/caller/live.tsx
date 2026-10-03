@@ -49,8 +49,15 @@ export default function CallerLiveCall() {
 
   useEffect(() => {
     if (isCallEnded) {
-      resetIncident();
-      router.push('/caller/home');
+      const current = useIncidentStore.getState().activeIncident;
+      if (current?.status === 'RESOLVED') {
+        router.push('/caller/incident');
+      } else if (current?.status === 'DISPATCHING' || current?.status === 'NEEDS_RESPONSE') {
+        router.push('/caller/waiting');
+      } else {
+        resetIncident();
+        router.push('/caller/home');
+      }
     }
   }, [isCallEnded]);
 
@@ -66,7 +73,15 @@ export default function CallerLiveCall() {
       if (matched) {
         setActiveIncident(matched);
       } else if (!currentActiveId || !activeList.some((i) => i.id === currentActiveId)) {
-        setActiveIncident(null);
+        // If resolved in DB, keep the incident reference and navigate to brief
+        const allIncidents = await supabaseService.fetchIncidents();
+        const resolvedMatch = allIncidents.find((i) => i.id === currentActiveId);
+        if (resolvedMatch && resolvedMatch.status === 'RESOLVED') {
+          setActiveIncident(resolvedMatch);
+          router.push('/caller/incident');
+        } else {
+          setActiveIncident(null);
+        }
       }
     };
 
@@ -79,7 +94,15 @@ export default function CallerLiveCall() {
 
       const matched = incidents.find((i) => i.id === currentActiveId);
 
-      if (!matched || matched.status === 'RESOLVED') {
+      if (matched && matched.status === 'RESOLVED') {
+        setActiveIncident(matched);
+        endCall();
+        AIService.speakGreeting(
+          'Emergency response resolved. Displaying incident brief report.',
+          selectedLanguage
+        );
+        router.push('/caller/incident');
+      } else if (!matched) {
         endCall();
         resetIncident();
         router.push('/caller/home');
@@ -120,12 +143,17 @@ export default function CallerLiveCall() {
 
   // Full Resolution: User's needs are satisfied and caller is safe
   const handleResolveAndFinish = async () => {
-    await endCall();
     if (activeIncident?.id) {
+      const resolved = { ...activeIncident, status: 'RESOLVED' as const };
+      setActiveIncident(resolved);
       await supabaseService.updateIncidentStatus(activeIncident.id, 'RESOLVED');
     }
-    resetIncident();
-    router.push('/caller/home');
+    await endCall();
+    AIService.speakGreeting(
+      'Emergency response resolved. Displaying incident brief report.',
+      selectedLanguage
+    );
+    router.push('/caller/incident');
   };
 
   // Re-queue: User needs NOT satisfied, proceed to next department and continue queuing

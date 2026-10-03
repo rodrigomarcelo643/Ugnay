@@ -78,6 +78,7 @@ export default function CallerHome() {
     return () => {
       clearTimeout(greetingTimer);
       if (channel) channel.unsubscribe();
+      stopListeningRef.current();
     };
   }, []);
 

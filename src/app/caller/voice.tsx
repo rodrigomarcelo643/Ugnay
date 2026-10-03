@@ -1,27 +1,29 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react';
-import { View, Text, Pressable, ScrollView, ActivityIndicator } from 'react-native';
-import { useRouter } from 'expo-router';
-import { useIncidentStore } from '@/store/incidentStore';
-import { useLiveSpeech } from '@/hooks/useLiveSpeech';
+import { AnimatedVoiceOrb } from '@/components/ui/AnimatedVoiceOrb';
 import { ConnectionStatus } from '@/components/ui/ConnectionStatus';
+import { TypewriterText } from '@/components/ui/TypewriterText';
 import { Button } from '@/components/ui/button';
 import { Logo } from '@/components/ui/logo';
-import { AnimatedVoiceOrb } from '@/components/ui/AnimatedVoiceOrb';
-import { TypewriterText } from '@/components/ui/TypewriterText';
+import { useLiveSpeech } from '@/hooks/useLiveSpeech';
+import { AIService, sanitizeTranscript } from '@/services/ai';
+import { supabaseService } from '@/services/supabase';
+import { useIncidentStore } from '@/store/incidentStore';
+import { useRouter } from 'expo-router';
 import {
+  AlertTriangle,
+  ArrowRight,
+  HeartHandshake,
   Mic,
+  PhoneCall,
+  Radio,
+  Send,
+  ShieldCheck,
   Sparkles,
   Volume2,
-  PhoneCall,
   XCircle,
-  HeartHandshake,
-  ShieldCheck,
-  AlertTriangle,
-  Radio,
   Zap,
 } from 'lucide-react-native';
-import { supabaseService } from '@/services/supabase';
-import { AIService, sanitizeTranscript } from '@/services/ai';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 
 export default function CallerVoice() {
   const router = useRouter();
@@ -32,6 +34,7 @@ export default function CallerVoice() {
     setSpeechTranscript,
     setIsListening,
     selectedLanguage,
+    setSelectedLanguage,
   } = useIncidentStore();
 
   const isBusyOnCall = Boolean(activeIncident && activeIncident.id && activeIncident.status === 'LIVE');
@@ -41,12 +44,13 @@ export default function CallerVoice() {
   const [comfortText, setComfortText] = useState<string>('');
   const [understoodSituation, setUnderstoodSituation] = useState<string>('');
   const [autoDispatchCountdown, setAutoDispatchCountdown] = useState<number | null>(null);
+  const [manualText, setManualText] = useState<string>('');
 
   const silenceTimerRef = useRef<any>(null);
   const countdownIntervalRef = useRef<any>(null);
   const hasTriggeredComfortRef = useRef<boolean>(false);
-  const stopListeningRef = useRef<() => void>(() => {});
-  const startListeningRef = useRef<() => void>(() => {});
+  const stopListeningRef = useRef<() => void>(() => { });
+  const startListeningRef = useRef<() => void>(() => { });
 
   // Trigger hands-free auto-dispatch once user finishes speaking
   const triggerAutoDispatch = useCallback(
@@ -99,8 +103,8 @@ export default function CallerVoice() {
             selectedLanguage.includes('Tagalog') || selectedLanguage.includes('Filipino')
               ? 'Huminahon ka po, kasama mo ako. Sabihin mo kung anong emergency ang nangyayari (sunog, baha, aksidente, o kailangan ng pulis)?'
               : selectedLanguage.includes('Bisaya') || selectedLanguage.includes('Cebuano')
-              ? 'Kalma lang palihug, ayaw kalisang. Isulti palihog unsay nahitabo (sunog, baha, pasyente, o pulis)?'
-              : 'Stay calm, take a slow deep breath. Please tell me what happened: is it fire, flood, medical, or police?';
+                ? 'Kalma lang palihug, ayaw kalisang. Isulti palihog unsay nahitabo (sunog, baha, pasyente, o pulis)?'
+                : 'Stay calm, take a slow deep breath. Please tell me what happened: is it fire, flood, medical, or police?';
           setComfortText(soothe);
         } else {
           setDetectedMood('LISTENING');
@@ -118,8 +122,8 @@ export default function CallerVoice() {
           selectedLanguage.includes('Tagalog') || selectedLanguage.includes('Filipino')
             ? `Huminahon ka, kasama mo ako. Inihahanda ang responde ng ${match.categoryLabel}.`
             : selectedLanguage.includes('Bisaya') || selectedLanguage.includes('Cebuano')
-            ? `Kalma lang palihug, ayaw kalisang. Giproseso na ang responde sa ${match.categoryLabel}.`
-            : `Stay calm, take a deep breath. Coordinating ${match.categoryLabel} rescue units for you now.`;
+              ? `Kalma lang palihug, ayaw kalisang. Giproseso na ang responde sa ${match.categoryLabel}.`
+              : `Stay calm, take a deep breath. Coordinating ${match.categoryLabel} rescue units for you now.`;
         setComfortText(comfort);
       } else {
         setDetectedMood('CALM');
@@ -127,8 +131,8 @@ export default function CallerVoice() {
           selectedLanguage.includes('Tagalog') || selectedLanguage.includes('Filipino')
             ? `Naiintindihan ko ang iyong emergency (${match.categoryLabel}). Inihahanda ang dispatch.`
             : selectedLanguage.includes('Bisaya') || selectedLanguage.includes('Cebuano')
-            ? `Nasabtan nako ang imong report (${match.categoryLabel}). Giproseso na ang emergency dispatch.`
-            : `I understand your report clearly (${match.categoryLabel}). Processing emergency dispatch details now.`;
+              ? `Nasabtan nako ang imong report (${match.categoryLabel}). Giproseso na ang emergency dispatch.`
+              : `I understand your report clearly (${match.categoryLabel}). Processing emergency dispatch details now.`;
         setComfortText(understood);
       }
 
@@ -197,11 +201,7 @@ export default function CallerVoice() {
     }
 
     // Auto-start listening on mount when entering voice screen
-    requestMicPermission().then((granted) => {
-      if (granted) {
-        startListening();
-      }
-    });
+    startListening();
 
     return () => {
       stopListening();
@@ -229,10 +229,7 @@ export default function CallerVoice() {
       }
     }
 
-    const granted = await requestMicPermission();
-    if (granted) {
-      startListening();
-    }
+    startListening();
   };
 
   const handleCancelCallToReportAgain = async () => {
@@ -247,8 +244,8 @@ export default function CallerVoice() {
   const activeText = isBusyOnCall
     ? 'AI Voice engine disabled during active call...'
     : (interimTranscript
-        ? `Hearing you: "${interimTranscript}"`
-        : (sanitizeTranscript(micTranscript) || sanitizeTranscript(speechTranscript) || 'Listening... Speak naturally into your microphone'));
+      ? `Hearing you: "${interimTranscript}"`
+      : (sanitizeTranscript(micTranscript) || sanitizeTranscript(speechTranscript) || 'Listening... Speak naturally into your microphone'));
 
   return (
     <ScrollView contentContainerClassName="flex-grow items-center justify-between bg-[#09090B] px-4 sm:px-6 py-6 pb-28">
@@ -338,6 +335,54 @@ export default function CallerVoice() {
               )}
             </Pressable>
           )}
+
+          {/* Language Selector Pills */}
+          <View className="flex-row items-center justify-center gap-1.5 mt-2.5">
+            {[
+              { label: '🇵🇭 Bisaya', code: 'Cebuano / Bisaya' },
+              { label: '🇵🇭 Tagalog', code: 'Tagalog / Filipino' },
+              { label: '🌐 English', code: 'English / Taglish' },
+            ].map((lang) => (
+              <Pressable
+                key={lang.code}
+                onPress={() => setSelectedLanguage(lang.code)}
+                className={`px-3 py-1 rounded-full border ${
+                  selectedLanguage === lang.code
+                    ? 'bg-amber-400/20 border-amber-400'
+                    : 'bg-[#18181B] border-[#27272A] active:bg-zinc-800'
+                }`}
+              >
+                <Text
+                  className={`text-[11px] font-bold ${
+                    selectedLanguage === lang.code ? 'text-amber-300' : 'text-zinc-400'
+                  }`}
+                >
+                  {lang.label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+
+          {/* Quick Emergency Category Chips */}
+          <View className="w-full flex-row flex-wrap items-center justify-center gap-1.5 mt-2">
+            {[
+              { label: '🔥 Fire / Sunog', text: 'May malaking sunog sa aming lokasyon, kailangan ng bumbero agad!' },
+              { label: '🚑 Medical / Sugatan', text: 'May taong nawalan ng malay at kailangan ng ambulansya agad!' },
+              { label: '🌊 Flood / Baha', text: 'Tumaas ang baha at may mga pamilyang na-trap sa bubong!' },
+              { label: '👮 Police / Tulong', text: 'Kailangan namin ng tulong ng pulis, may emergency sa lugar!' },
+            ].map((cat) => (
+              <Pressable
+                key={cat.label}
+                onPress={() => {
+                  setSpeechTranscript(cat.text);
+                  evaluateUserBehavior(cat.text);
+                }}
+                className="bg-[#18181B] border border-[#27272A] rounded-xl px-2.5 py-1 active:bg-zinc-800"
+              >
+                <Text className="text-[11px] font-semibold text-zinc-300">{cat.label}</Text>
+              </Pressable>
+            ))}
+          </View>
         </View>
 
         {/* AI REAL-TIME BEHAVIOR OBSERVATION & COMFORTING CARD */}
@@ -398,7 +443,7 @@ export default function CallerVoice() {
             </View>
           )}
 
-          {/* Hands-Free Auto-Dispatching Countdown Bar (No button to press!) */}
+          {/* Hands-Free Auto-Dispatching Countdown Bar */}
           {autoDispatchCountdown !== null && autoDispatchCountdown > 0 ? (
             <View className="flex-row items-center justify-between rounded-xl bg-amber-500/15 border border-amber-500/40 p-3 px-3.5 gap-2 flex-wrap">
               <View className="flex-row items-center gap-2 shrink-0">
@@ -436,8 +481,52 @@ export default function CallerVoice() {
           </View>
         </View>
 
+        {/* Manual Typewriter Backup Input */}
+        <View className="w-full flex-row items-center gap-2 bg-[#18181B] border border-[#27272A] rounded-2xl px-3.5 py-1.5 shadow-sm">
+          <TextInput
+            placeholder="Type emergency description if quiet area..."
+            placeholderTextColor="#71717A"
+            value={manualText}
+            onChangeText={(t) => {
+              setManualText(t);
+              setSpeechTranscript(t);
+              evaluateUserBehavior(t);
+            }}
+            onSubmitEditing={() => {
+              if (manualText.trim()) triggerAutoDispatch(manualText.trim());
+            }}
+            className="flex-1 text-xs font-semibold text-white py-2"
+          />
+          <Pressable
+            onPress={() => {
+              const toSend = manualText.trim() || speechTranscript || micTranscript || 'Emergency reported';
+              triggerAutoDispatch(toSend);
+            }}
+            className="bg-amber-400 p-2.5 rounded-xl active:bg-amber-500"
+          >
+            <Send size={15} color="#09090B" />
+          </Pressable>
+        </View>
+
+        {/* Direct Proceed / Dispatch Button */}
+        <Button
+          title="PROCEED TO EMERGENCY DISPATCH"
+          variant="gold"
+          size="lg"
+          icon={<ArrowRight size={18} color="#09090B" />}
+          onPress={() => {
+            const toSend =
+              speechTranscript ||
+              micTranscript ||
+              manualText ||
+              'Emergency intake via UGNAY AI Voice';
+            triggerAutoDispatch(toSend);
+          }}
+          className="w-full py-4 mt-0.5"
+        />
+
         <Text className="text-center text-[11px] text-zinc-500 font-medium">
-          Hands-Free Mode: Speak naturally. The AI understands you, comforts your panic, and automatically dispatches without pressing any button.
+          Speak naturally or choose a category above. The AI comforts you and dispatches nearest rescue units.
         </Text>
       </View>
     </ScrollView>

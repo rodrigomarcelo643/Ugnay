@@ -36,28 +36,47 @@ export const AIBriefCard: React.FC<AIBriefCardProps> = ({ incident }) => {
         </Text>
       </View>
 
-      {/* Matched Nearest Department Dispatch Banner */}
-      <View className="rounded-2xl bg-sky-500/10 border border-sky-500/30 p-3.5 gap-1">
-        <View className="flex-row items-center justify-between">
-          <Text className="text-xs font-black uppercase tracking-wider text-sky-400">
-            MATCHED NEAREST DEPARTMENT
+      {/* Matched Department / Resolution Status Banner */}
+      {incident.status === 'RESOLVED' ? (
+        <View className="rounded-2xl bg-emerald-500/15 border border-emerald-500/40 p-3.5 gap-1.5">
+          <View className="flex-row items-center justify-between">
+            <Text className="text-xs font-black uppercase tracking-wider text-emerald-400">
+              RESPONSE RESOLVED & CASE CLOSED
+            </Text>
+            <View className="bg-emerald-500/20 px-2.5 py-0.5 rounded-full border border-emerald-500/30">
+              <Text className="text-[10px] font-black text-emerald-300">RESOLVED</Text>
+            </View>
+          </View>
+          <Text className="text-sm font-black text-white">
+            {incident.responder_name || 'Emergency Responder Unit'} • {incident.department_name || 'Rescue Command'}
           </Text>
-          <Text className="text-xs font-extrabold text-emerald-400">
-            {incident.distance_km ? `${incident.distance_km} km away` : 'Nearest Station'}
-          </Text>
-        </View>
-        <Text className="text-sm font-black text-white">
-          {incident.department_name || 'Emergency Response Department'}
-        </Text>
-        <View className="flex-row items-center justify-between pt-0.5">
-          <Text className="text-xs font-semibold text-zinc-400">
-            {incident.station_name || 'Nearest Local Station'}
-          </Text>
-          <Text className="text-xs font-extrabold text-amber-400">
-            ETA: {incident.eta_minutes || 3} mins
+          <Text className="text-xs text-zinc-300">
+            Station: {incident.station_name || 'Local Emergency Command'} • All Objectives Verified
           </Text>
         </View>
-      </View>
+      ) : (
+        <View className="rounded-2xl bg-sky-500/10 border border-sky-500/30 p-3.5 gap-1">
+          <View className="flex-row items-center justify-between">
+            <Text className="text-xs font-black uppercase tracking-wider text-sky-400">
+              MATCHED NEAREST DEPARTMENT
+            </Text>
+            <Text className="text-xs font-extrabold text-emerald-400">
+              {incident.distance_km ? `${incident.distance_km} km away` : 'Nearest Station'}
+            </Text>
+          </View>
+          <Text className="text-sm font-black text-white">
+            {incident.department_name || 'Emergency Response Department'}
+          </Text>
+          <View className="flex-row items-center justify-between pt-0.5">
+            <Text className="text-xs font-semibold text-zinc-400">
+              {incident.station_name || 'Nearest Local Station'}
+            </Text>
+            <Text className="text-xs font-extrabold text-amber-400">
+              ETA: {incident.eta_minutes || 3} mins
+            </Text>
+          </View>
+        </View>
+      )}
 
       {/* Grid Summary Tags */}
       <View className="flex-row flex-wrap gap-2 pt-1">

@@ -1,6 +1,14 @@
 import { Buffer } from 'buffer';
 import "../global.css";
 
+// Configure NativeWind / react-native-css-interop dark mode to class-based
+try {
+  const { StyleSheet: interopStyleSheet } = require('react-native-css-interop');
+  if (interopStyleSheet && typeof interopStyleSheet.setFlag === 'function') {
+    interopStyleSheet.setFlag('darkMode', 'class');
+  }
+} catch (e) {}
+
 function polyfillUtilInherits(target: any) {
   if (!target) return;
   if (!target.util) target.util = {};

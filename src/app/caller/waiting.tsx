@@ -356,6 +356,11 @@ export default function CallerWaitingScreen() {
           stopListening();
           AIService.speakGreeting('Responder connected! Transferring to live dispatch line.');
           router.push('/caller/live');
+        } else if (matched.status === 'RESOLVED') {
+          agoraConvoAI.handoverToHumanResponder();
+          stopListening();
+          AIService.speakGreeting('Emergency response resolved. Displaying incident brief report.');
+          router.push('/caller/incident');
         } else if (matched.status === 'DISPATCHING') {
           // If was previously paired, actually rejected, or re-routed to a new department
           const currentDept = useIncidentStore.getState().activeIncident?.department_name;
