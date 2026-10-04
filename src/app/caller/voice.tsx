@@ -198,10 +198,10 @@ export default function CallerVoice() {
   const handleTranscriptUpdate = useCallback(
     (liveText: string) => {
       if (isBusyOnCall) return;
-      const cleanText = sanitizeTranscript(liveText);
-      if (cleanText) {
-        setSpeechTranscript(cleanText);
-        evaluateUserBehavior(cleanText);
+      const textToUse = sanitizeTranscript(liveText) || liveText?.trim();
+      if (textToUse) {
+        setSpeechTranscript(textToUse);
+        evaluateUserBehavior(textToUse);
       }
     },
     [setSpeechTranscript, evaluateUserBehavior, isBusyOnCall]

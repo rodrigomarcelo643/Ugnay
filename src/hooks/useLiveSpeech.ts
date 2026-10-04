@@ -52,6 +52,7 @@ export function useLiveSpeech(
   const nativeRecordingRef = useRef<any>(null);
   const restartTimeoutRef = useRef<any>(null);
   const isStartingRef = useRef<boolean>(false);
+  const speechStartTimeRef = useRef<number>(0);
   const lastTranscriptRef = useRef<{ text: string; timestamp: number }>({ text: '', timestamp: 0 });
 
   const isMicSupported = true;
@@ -217,8 +218,8 @@ export function useLiveSpeech(
             const actualMime = recorder.mimeType || mime || 'audio/webm';
             const audioBlob = new Blob(chunks, { type: actualMime });
 
-            // Only transcribe if speech was detected and blob contains meaningful audio (>2000 bytes)
-            if (audioBlob.size > 2000) {
+            // Only transcribe if audio chunk contains voice bytes (> 500 bytes)
+            if (audioBlob.size > 500) {
               isWhisperTranscribingRef.current = true;
               try {
                 await transcribeWithOpenAIWhisper(audioBlob);
@@ -240,6 +241,20 @@ export function useLiveSpeech(
     [transcribeWithOpenAIWhisper]
   );
 
+  const flushRecordingToWhisper = useCallback(() => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      try {
+        const currentRec = mediaRecorderRef.current;
+        mediaRecorderRef.current = null;
+        currentRec.stop();
+      } catch (e) {}
+    }
+
+    if (isListeningRef.current && mediaStreamRef.current && mediaStreamRef.current.active) {
+      createAndStartMediaRecorder(mediaStreamRef.current);
+    }
+  }, [createAndStartMediaRecorder]);
+
   const requestMicPermission = useCallback(async (): Promise<boolean> => {
     try {
       if (Platform.OS === 'web' && typeof navigator !== 'undefined') {
@@ -249,33 +264,25 @@ export function useLiveSpeech(
           return true;
         }
 
-        if (navigator.permissions && navigator.permissions.query) {
-          try {
-            const status = await navigator.permissions.query({ name: 'microphone' as PermissionName });
-            if (status.state === 'granted') {
-              setHasPermission(true);
-              setError(null);
-              return true;
-            } else if (status.state === 'denied') {
-              setHasPermission(false);
-              setError('Microphone access denied. Tap browser address bar to allow.');
-              return false;
-            }
-          } catch (pErr) {}
-        }
-
         if (navigator.mediaDevices?.getUserMedia) {
-          const stream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-              echoCancellation: true,
-              noiseSuppression: true,
-              autoGainControl: true,
-            },
-          });
-          mediaStreamRef.current = stream;
-          setHasPermission(true);
-          setError(null);
-          return true;
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+              audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+              },
+            });
+            mediaStreamRef.current = stream;
+            setHasPermission(true);
+            setError(null);
+            return true;
+          } catch (gErr: any) {
+            console.warn('[LiveSpeech] getUserMedia request error:', gErr);
+            setHasPermission(false);
+            setError('Microphone access denied. Tap browser address bar to allow.');
+            return false;
+          }
         }
 
         setHasPermission(true);
@@ -360,10 +367,6 @@ export function useLiveSpeech(
         mediaStreamRef.current = stream;
       }
 
-      const hasNativeSpeech =
-        typeof window !== 'undefined' &&
-        Boolean((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
-
       // Always start MediaRecorder for reliable OpenAI Whisper audio capture & transcription
       createAndStartMediaRecorder(stream);
 
@@ -382,7 +385,7 @@ export function useLiveSpeech(
       audioCtxRef.current = audioCtx;
       const source = audioCtx.createMediaStreamSource(stream);
       const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 64;
+      analyser.fftSize = 256;
       source.connect(analyser);
       analyserRef.current = analyser;
 
@@ -391,19 +394,25 @@ export function useLiveSpeech(
       const updateLevel = () => {
         if (!analyserRef.current) return;
         analyserRef.current.getByteFrequencyData(dataArray);
-        let sum = 0;
-        for (let i = 0; i < dataArray.length; i++) {
-          sum += dataArray[i];
+
+        // Vocal fundamental range (100Hz - 2500Hz) is in the first 24 bins
+        let voiceMax = 0;
+        const checkBins = Math.min(24, dataArray.length);
+        for (let i = 0; i < checkBins; i++) {
+          if (dataArray[i] > voiceMax) voiceMax = dataArray[i];
         }
-        const avg = sum / dataArray.length;
-        const normalized = Math.min(100, Math.round((avg / 128) * 100));
-        setAudioLevel(normalized);
+        const voiceLevel = Math.min(100, Math.round((voiceMax / 130) * 100));
+        setAudioLevel(voiceLevel);
 
         // Voice Activity Detection (VAD)
-        if (normalized > 10) {
-          hasSpokenRecentlyRef.current = true;
-          // User barge-in: pause AI speaking when user speaks firmly (> 16%)
-          if (normalized > 16 && AIService.isSpeaking()) {
+        if (voiceLevel >= 5) {
+          if (!hasSpokenRecentlyRef.current) {
+            hasSpokenRecentlyRef.current = true;
+            speechStartTimeRef.current = Date.now();
+          }
+
+          // User barge-in: pause AI speaking when user speaks firmly
+          if (voiceLevel > 16 && AIService.isSpeaking()) {
             AIService.interruptSpeech();
           }
           if (silenceFlushTimerRef.current) {
@@ -413,26 +422,20 @@ export function useLiveSpeech(
           if (onSpeechStartRef.current) {
             onSpeechStartRef.current();
           }
-        } else if (hasSpokenRecentlyRef.current && normalized < 8) {
-          // Caller paused speaking: wait 450ms then flush recording to Whisper
+
+          // Continuous chunk roll: if speaking continuously for > 3.0s, flush a chunk
+          if (Date.now() - speechStartTimeRef.current > 3000) {
+            speechStartTimeRef.current = Date.now();
+            flushRecordingToWhisper();
+          }
+        } else if (hasSpokenRecentlyRef.current && voiceLevel < 5) {
+          // Caller paused speaking: wait 380ms then flush recording to Whisper
           if (!silenceFlushTimerRef.current) {
             silenceFlushTimerRef.current = setTimeout(() => {
               hasSpokenRecentlyRef.current = false;
               silenceFlushTimerRef.current = null;
-
-              if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-                try {
-                  const currentRec = mediaRecorderRef.current;
-                  mediaRecorderRef.current = null;
-                  currentRec.stop(); // Triggers onstop -> transcribes with Whisper!
-                } catch (e) {}
-              }
-
-              // Immediately start fresh MediaRecorder on the active stream for next speech
-              if (isListeningRef.current && mediaStreamRef.current?.active) {
-                createAndStartMediaRecorder(mediaStreamRef.current);
-              }
-            }, 450);
+              flushRecordingToWhisper();
+            }, 380);
           }
         }
 
@@ -467,7 +470,7 @@ export function useLiveSpeech(
       }
 
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        startAudioAnalysis();
+        await startAudioAnalysis();
         const SpeechRecognition =
           (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
@@ -550,30 +553,21 @@ export function useLiveSpeech(
             if (recognitionRef.current !== recognition) return;
             const errType = evt.error;
 
+            if (errType === 'network' && recognition.lang === 'fil-PH') {
+              console.log('[LiveSpeech] fil-PH network error; switching SpeechRecognition to en-US');
+              try {
+                recognition.lang = 'en-US';
+                recognition.start();
+                return;
+              } catch (e) {}
+            }
+
             if (errType === 'not-allowed' || errType === 'service-not-allowed') {
-              console.warn(`[LiveSpeech] Browser SpeechRecognition restricted (${errType}). Seamlessly using OpenAI Whisper AI.`);
+              console.warn(`[LiveSpeech] Browser SpeechRecognition restricted (${errType}). Whisper AI handles all transcription.`);
               try {
                 recognition.abort();
               } catch (e) {}
               recognitionRef.current = null;
-
-              if (mediaStreamRef.current && mediaStreamRef.current.active) {
-                isListeningRef.current = true;
-                setIsListening(true);
-                setError(null);
-                if (!mediaRecorderRef.current || mediaRecorderRef.current.state === 'inactive') {
-                  createAndStartMediaRecorder(mediaStreamRef.current);
-                }
-              } else {
-                setError('Microphone permission blocked. Please allow mic in browser settings.');
-                isListeningRef.current = false;
-                setIsListening(false);
-              }
-            } else if (errType === 'network') {
-              try {
-                recognition.lang =
-                  typeof navigator !== 'undefined' ? navigator.language || 'en-US' : 'en-US';
-              } catch (e) {}
             } else if (errType === 'no-speech' || errType === 'aborted') {
               // Expected silence or lifecycle events
             } else {
