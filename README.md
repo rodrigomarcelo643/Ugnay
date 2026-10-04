@@ -1,5 +1,20 @@
-# UGNAY — Voice-First Human Response Network
-**AI-Assisted Emergency Response, Intelligent Triage & Multi-Agency Dispatch Platform**
+<div align="center">
+  <img src="assets/logo/ugnay_logo.jpg" alt="UGNAY Logo" width="120" style="border-radius: 20px; box-shadow: 0 8px 24px rgba(0,0,0,0.5);" />
+
+  # UGNAY
+  ### Voice-First Human Response Network
+  **AI-Assisted Emergency Response, Intelligent Triage & Multi-Agency Dispatch Platform**
+
+  <p align="center">
+    <img src="https://img.shields.io/badge/Expo_SDK_57-000020?style=for-the-badge&logo=expo&logoColor=white" alt="Expo SDK 57" />
+    <img src="https://img.shields.io/badge/React_Native-20232A?style=for-the-badge&logo=react&logoColor=61DAFB" alt="React Native" />
+    <img src="https://img.shields.io/badge/Agora_RTC-099DFD?style=for-the-badge&logo=agora&logoColor=white" alt="Agora RTC" />
+    <img src="https://img.shields.io/badge/Supabase_Realtime-3ECF8E?style=for-the-badge&logo=supabase&logoColor=white" alt="Supabase Realtime" />
+    <img src="https://img.shields.io/badge/OpenAI_Voice_AI-412991?style=for-the-badge&logo=openai&logoColor=white" alt="OpenAI Voice AI" />
+    <img src="https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript" />
+    <img src="https://img.shields.io/badge/Tailwind_CSS-38BDF8?style=for-the-badge&logo=tailwindcss&logoColor=white" alt="Tailwind CSS" />
+  </p>
+</div>
 
 ---
 
