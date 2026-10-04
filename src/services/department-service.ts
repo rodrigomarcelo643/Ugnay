@@ -371,8 +371,14 @@ export const DepartmentService = {
       if (incidentType === 'MEDICAL' || incidentType === 'ACCIDENT') return dept.category === 'MEDICAL' || dept.type === 'EMS_AMBULANCE';
       if (incidentType === 'SECURITY') return dept.category === 'SECURITY' || dept.type === 'POLICE_DEPT';
       if (incidentType === 'FLOOD' || incidentType === 'TYPHOON') return dept.category === 'FLOOD' || dept.type === 'FLOOD_DRRMO';
-      return true; // GENERAL matches DRRMO / all
+      if (incidentType === 'GENERAL') return dept.category === 'GENERAL' || dept.type === 'FLOOD_DRRMO' || dept.category === 'FLOOD';
+      return true;
     });
+
+    // Fallback if no specific GENERAL DRRMO department was found
+    if (matching.length === 0 && incidentType === 'GENERAL') {
+      matching = sourceList.filter((dept) => !preferAvailable || !dept.status || dept.status === 'AVAILABLE');
+    }
 
     // 2. Filter out any previously rejected departments using normalized comparison
     if (excludedDepartmentIdentifiers && excludedDepartmentIdentifiers.length > 0) {
@@ -538,7 +544,7 @@ export function normalizeDeptString(str: string | null | undefined): string {
 
 /**
  * Determines whether a given responder's department and category match an incident.
- * Ensures that only available responders matching the emergency category and non-rejected station can receive calls.
+ * Ensures that only available responders matching the emergency category receive calls.
  */
 export function doesResponderMatchIncident(
   responder: UserProfile | null | undefined,
@@ -607,9 +613,8 @@ export function doesResponderMatchIncident(
   const stationName = normalizeDeptString(responder.station_name);
   const incType = ((incident.incident_type || incident.type || 'GENERAL') as string).toUpperCase();
   const incDept = incident.department;
-  const incStation = normalizeDeptString(incident.station_name || incident.department_name);
 
-  // 3.5 Check if responder's station / department is marked as unavailable
+  // 4. Check if responder's station / department is marked as offline/occupied in active registry
   const allDepts = DepartmentService.getDepartments();
   const responderDeptObj = allDepts.find(
     (d) =>
@@ -621,78 +626,35 @@ export function doesResponderMatchIncident(
     return false;
   }
 
-  // 4. STATION SPECIFICITY CHECK: If incident was dispatched to a specific target station, only that station's responders match!
-  if (incStation) {
-    if (stationName || deptName) {
-      const isMatchingStation =
-        (stationName && (incStation.includes(stationName) || stationName.includes(incStation))) ||
-        (deptName && (incStation.includes(deptName) || deptName.includes(incStation)));
+  // 5. PRIMARY CATEGORY MATCHING: Strictly verify that the responder belongs to the required emergency department!
+  let isDepartmentMatch = false;
 
-      // If responder is assigned to a specific station that does NOT match the target dispatch station, DO NOT CALL!
-      if (!isMatchingStation) {
-        return false;
-      }
-      return true;
+  // A. Direct DepartmentType match (e.g. FIRE_DEPT === FIRE_DEPT, EMS_AMBULANCE === EMS_AMBULANCE)
+  if (dept && incDept && dept === incDept) {
+    isDepartmentMatch = true;
+  }
+
+  // B. Strict Incident Category to Responder Department Type match
+  if (!isDepartmentMatch) {
+    if (incType === 'FIRE') {
+      isDepartmentMatch = dept === 'FIRE_DEPT' || deptName.includes('fire') || stationName.includes('fire') || deptName.includes('bfp');
+    } else if (incType === 'MEDICAL' || incType === 'ACCIDENT') {
+      isDepartmentMatch = dept === 'EMS_AMBULANCE' || deptName.includes('ems') || stationName.includes('ems') || deptName.includes('ambulance') || deptName.includes('hospital') || deptName.includes('medical') || deptName.includes('st luke');
+    } else if (incType === 'SECURITY' || incType === 'POLICE') {
+      isDepartmentMatch = dept === 'POLICE_DEPT' || deptName.includes('police') || stationName.includes('police') || deptName.includes('pnp') || deptName.includes('precinct');
+    } else if (incType === 'FLOOD' || incType === 'TYPHOON') {
+      isDepartmentMatch = dept === 'FLOOD_DRRMO' || deptName.includes('flood') || stationName.includes('flood') || deptName.includes('drrmo') || deptName.includes('rescue');
+    } else if (incType === 'GENERAL') {
+      // General distress incidents route to DRRMO Command, Barangay, or any available primary emergency service
+      isDepartmentMatch = dept === 'FLOOD_DRRMO' || dept === 'BARANGAY_RESPONSE' || deptName.includes('drrmo') || deptName.includes('command') || deptName.includes('rescue');
     }
   }
 
-  // 5. Direct DepartmentType match (e.g. FIRE_DEPT === FIRE_DEPT)
-  if (dept && incDept && dept === incDept) {
-    return true;
+  // If responder department does not match the emergency type, DO NOT ROUTE!
+  // (Prevents police answering fire calls, or medical answering police robbery calls)
+  if (!isDepartmentMatch) {
+    return false;
   }
 
-  // 6. Strict Incident Category to Responder Department Type match
-  if (dept === 'FIRE_DEPT') {
-    return incType === 'FIRE';
-  }
-  if (dept === 'POLICE_DEPT') {
-    return incType === 'SECURITY' || incType === 'POLICE';
-  }
-  if (dept === 'EMS_AMBULANCE') {
-    return incType === 'MEDICAL' || incType === 'ACCIDENT';
-  }
-  if (dept === 'FLOOD_DRRMO') {
-    return incType === 'FLOOD' || incType === 'TYPHOON' || incType === 'GENERAL';
-  }
-  if (dept === 'BARANGAY_RESPONSE') {
-    return true; // Local barangay responders handle localized community alerts
-  }
-
-  // 7. Keyword fallback matching on responder department name / station name
-  if (deptName.includes('fire') || stationName.includes('fire') || deptName.includes('bfp')) {
-    return incType === 'FIRE';
-  }
-  if (
-    deptName.includes('police') ||
-    stationName.includes('police') ||
-    deptName.includes('pnp') ||
-    deptName.includes('precinct')
-  ) {
-    return incType === 'SECURITY' || incType === 'POLICE';
-  }
-  if (
-    deptName.includes('ems') ||
-    stationName.includes('ems') ||
-    deptName.includes('ambulance') ||
-    deptName.includes('medical') ||
-    deptName.includes('st luke') ||
-    deptName.includes('hospital')
-  ) {
-    return incType === 'MEDICAL' || incType === 'ACCIDENT';
-  }
-  if (
-    deptName.includes('drrmo') ||
-    stationName.includes('drrmo') ||
-    deptName.includes('flood') ||
-    deptName.includes('rescue')
-  ) {
-    return incType === 'FLOOD' || incType === 'TYPHOON' || incType === 'GENERAL';
-  }
-
-  // If incident has no specific type or is GENERAL
-  if (incType === 'GENERAL') {
-    return true;
-  }
-
-  return false;
+  return true;
 }

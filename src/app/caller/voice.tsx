@@ -86,72 +86,111 @@ export default function CallerVoice() {
   // Observe caller behavior and verify if voice input matches a real emergency
   const evaluateUserBehavior = useCallback(
     async (liveText: string) => {
-      if (!liveText || liveText.trim().length < 3) return;
+      if (!liveText || liveText.trim().length < 2) return;
 
-      // 1. Strict Emergency Verification & Categorization via OpenAI Evaluation
-      const evaluation = await AIService.evaluateEmergencyAndPanic(liveText);
+      // 1. FAST LOCAL KEYWORD & CATEGORY TRIAGE (Zero-latency instant matching)
+      const quickMatch = AIService.matchResponderCategory(liveText);
+      const isEmergencyDistress = quickMatch.isMatch;
 
-      // CRITICAL: DO NOT DISPATCH IF NOT AN EMERGENCY!
-      if (!evaluation.is_emergency || evaluation.category === 'UNMATCHED') {
+      if (isEmergencyDistress) {
+        setUnderstoodSituation(quickMatch.categoryLabel);
+        setDetectedMood(
+          /(?:patay|mamatay|saklolo|tulong|tabang|papatayin|dios ko|diyos ko)/i.test(liveText)
+            ? 'PANICKED'
+            : 'CALM'
+        );
+
+        const comfort =
+          selectedLanguage.includes('Tagalog') || selectedLanguage.includes('Filipino')
+            ? `Naiintindihan ko ang emergency (${quickMatch.categoryLabel}). Huminahon po, inihahanda ang dispatch.`
+            : selectedLanguage.includes('Bisaya') || selectedLanguage.includes('Cebuano')
+              ? `Nasabtan nako ang emergency (${quickMatch.categoryLabel}). Kalma lang palihug, giandam na ang dispatch.`
+              : `I understand your emergency (${quickMatch.categoryLabel}). Stay calm, preparing rescue dispatch.`;
+        setComfortText(comfort);
+
+        // Clear any prior timer before starting silence detection
         if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
         if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
-        setAutoDispatchCountdown(null);
-        setUnderstoodSituation('');
-        setDetectedMood('LISTENING');
 
-        const promptDetail =
-          selectedLanguage.includes('Tagalog') || selectedLanguage.includes('Filipino')
-            ? 'Nakikinig ako. Pakisabi po kung anong emergency ang nangyayari (sunog, baha, aksidente, o kailangan ng pulis)?'
-            : selectedLanguage.includes('Bisaya') || selectedLanguage.includes('Cebuano')
-              ? 'Paminaw ko nimo. Isulti palihug kon unsay emergency (sunog, baha, pasyente, o pulis)?'
-              : 'Listening... Please describe the emergency: is it fire, flood, medical, or police?';
-        setComfortText(promptDetail);
+        // 2-second countdown to allow caller to add details, then auto-dispatch
+        let secondsRemaining = 2;
+        setAutoDispatchCountdown(secondsRemaining);
+
+        countdownIntervalRef.current = setInterval(() => {
+          secondsRemaining -= 1;
+          if (secondsRemaining <= 0) {
+            clearInterval(countdownIntervalRef.current!);
+          } else {
+            setAutoDispatchCountdown(secondsRemaining);
+          }
+        }, 1000);
+
+        silenceTimerRef.current = setTimeout(() => {
+          triggerAutoDispatch(liveText);
+        }, 2200);
+
+        // Background AI panic evaluation
+        AIService.evaluateEmergencyAndPanic(liveText).then((evalResult) => {
+          if (evalResult.is_panic) setDetectedMood('PANICKED');
+        }).catch(() => {});
+
         return;
       }
 
-      // 2. REAL EMERGENCY IDENTIFIED & CATEGORIZED!
-      setUnderstoodSituation(evaluation.categoryLabel);
+      // 2. Strict Emergency Verification via OpenAI Evaluation for complex speech
+      try {
+        const evaluation = await AIService.evaluateEmergencyAndPanic(liveText);
 
-      if (evaluation.is_panic) {
-        setDetectedMood('PANICKED');
+        if (!evaluation.is_emergency || evaluation.category === 'UNMATCHED') {
+          if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+          if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+          setAutoDispatchCountdown(null);
+          setUnderstoodSituation('');
+          setDetectedMood('LISTENING');
+
+          const promptDetail =
+            selectedLanguage.includes('Tagalog') || selectedLanguage.includes('Filipino')
+              ? 'Nakikinig ako. Pakisabi po kung anong emergency ang nangyayari (sunog, baha, aksidente, o kailangan ng pulis)?'
+              : selectedLanguage.includes('Bisaya') || selectedLanguage.includes('Cebuano')
+                ? 'Paminaw ko nimo. Isulti palihug kon unsay emergency (sunog, baha, pasyente, o pulis)?'
+                : 'Listening... Please describe the emergency: is it fire, flood, medical, or police?';
+          setComfortText(promptDetail);
+          return;
+        }
+
+        // REAL EMERGENCY IDENTIFIED VIA AI!
+        setUnderstoodSituation(evaluation.categoryLabel);
+        setDetectedMood(evaluation.is_panic ? 'PANICKED' : 'CALM');
+
         const comfort =
-          selectedLanguage.includes('Tagalog') || selectedLanguage.includes('Filipino')
-            ? `Huminahon ka, kasama mo ako. Inihahanda ang responde ng ${evaluation.categoryLabel}.`
-            : selectedLanguage.includes('Bisaya') || selectedLanguage.includes('Cebuano')
-              ? `Kalma lang palihug, ayaw kalisang. Giproseso na ang responde sa ${evaluation.categoryLabel}.`
-              : `Stay calm, take a deep breath. Coordinating ${evaluation.categoryLabel} rescue units for you now.`;
-        setComfortText(comfort);
-      } else {
-        setDetectedMood('CALM');
-        const understood =
           selectedLanguage.includes('Tagalog') || selectedLanguage.includes('Filipino')
             ? `Naiintindihan ko ang iyong emergency (${evaluation.categoryLabel}). Inihahanda ang dispatch.`
             : selectedLanguage.includes('Bisaya') || selectedLanguage.includes('Cebuano')
               ? `Nasabtan nako ang imong report (${evaluation.categoryLabel}). Giproseso na ang emergency dispatch.`
               : `I understand your report clearly (${evaluation.categoryLabel}). Processing emergency dispatch details now.`;
-        setComfortText(understood);
+        setComfortText(comfort);
+
+        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+        if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+
+        let secondsRemaining = 2;
+        setAutoDispatchCountdown(secondsRemaining);
+
+        countdownIntervalRef.current = setInterval(() => {
+          secondsRemaining -= 1;
+          if (secondsRemaining <= 0) {
+            clearInterval(countdownIntervalRef.current!);
+          } else {
+            setAutoDispatchCountdown(secondsRemaining);
+          }
+        }, 1000);
+
+        silenceTimerRef.current = setTimeout(() => {
+          triggerAutoDispatch(liveText);
+        }, 2200);
+      } catch (err) {
+        console.warn('AI evaluation notice:', err);
       }
-
-      // Clear any prior timer before starting silence detection
-      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-      if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
-
-      // Start 3-second countdown to allow caller to finish speech, then auto-dispatch
-      let secondsRemaining = 3;
-      setAutoDispatchCountdown(secondsRemaining);
-
-      countdownIntervalRef.current = setInterval(() => {
-        secondsRemaining -= 1;
-        if (secondsRemaining <= 0) {
-          clearInterval(countdownIntervalRef.current!);
-        } else {
-          setAutoDispatchCountdown(secondsRemaining);
-        }
-      }, 1000);
-
-      silenceTimerRef.current = setTimeout(() => {
-        triggerAutoDispatch(liveText);
-      }, 3000);
     },
     [selectedLanguage, triggerAutoDispatch]
   );
@@ -248,15 +287,18 @@ export default function CallerVoice() {
     if (isBusyOnCall) return;
 
     const currentSpoken = sanitizeTranscript(micTranscript) || sanitizeTranscript(speechTranscript);
-    if (currentSpoken && currentSpoken.trim().length >= 3) {
-      const match = AIService.matchResponderCategory(currentSpoken);
-      if (match.isMatch) {
-        triggerAutoDispatch(currentSpoken);
-        return;
-      }
+    if (currentSpoken && currentSpoken.trim().length >= 2) {
+      triggerAutoDispatch(currentSpoken);
+      return;
     }
 
     startListening();
+  };
+
+  const handleQuickCategoryDispatch = (categoryName: string) => {
+    if (isBusyOnCall) return;
+    const promptText = `${categoryName} emergency reported via UGNAY voice dispatch interface`;
+    triggerAutoDispatch(promptText);
   };
 
   const handleCancelCallToReportAgain = async () => {
@@ -388,6 +430,27 @@ export default function CallerVoice() {
             ))}
           </View>
 
+          {/* 1-Tap Emergency Category Dispatch (Bypasses Deadair) */}
+          <View className="flex-row flex-wrap items-center justify-center gap-2 mt-2.5">
+            {[
+              { label: '🔥 FIRE', category: 'Fire' },
+              { label: '🚑 MEDICAL', category: 'Medical' },
+              { label: '🚓 POLICE', category: 'Police' },
+              { label: '🌊 FLOOD', category: 'Flood' },
+            ].map((cat) => (
+              <Pressable
+                key={cat.category}
+                onPress={() => handleQuickCategoryDispatch(cat.category)}
+                disabled={isBusyOnCall}
+                className="bg-[#18181B] border border-[#27272A] active:bg-zinc-800 px-3 py-1.5 rounded-full"
+              >
+                <Text className="text-xs font-black text-amber-300">
+                  {cat.label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+
         </View>
 
         {/* AI GUIDANCE & EMOTIONAL SUPPORT CARD */}
@@ -448,17 +511,20 @@ export default function CallerVoice() {
             </View>
           )}
 
-          {/* Hands-Free Auto-Dispatching Countdown Bar */}
+          {/* Hands-Free Auto-Dispatching Countdown Bar with Instant Send */}
           {autoDispatchCountdown !== null && autoDispatchCountdown > 0 ? (
-            <View className="flex-row items-center justify-between rounded-xl bg-amber-500/15 border border-amber-500/40 p-3 px-3.5 gap-2 flex-wrap">
+            <Pressable
+              onPress={() => triggerAutoDispatch(sanitizeTranscript(speechTranscript) || sanitizeTranscript(micTranscript) || 'Emergency assistance needed')}
+              className="flex-row items-center justify-between rounded-xl bg-amber-500 border border-amber-400 p-3 px-3.5 gap-2 flex-wrap active:scale-98"
+            >
               <View className="flex-row items-center gap-2 shrink-0">
-                <ActivityIndicator size="small" color="#FBBF24" />
-                <Text className="text-xs font-black text-amber-300">
-                  AUTO-DISPATCHING IN {autoDispatchCountdown}s...
+                <ActivityIndicator size="small" color="#09090B" />
+                <Text className="text-xs font-black text-zinc-950 uppercase tracking-wider">
+                  DISPATCHING IN {autoDispatchCountdown}s • TAP TO SEND NOW ⚡
                 </Text>
               </View>
-              <Text className="text-[10px] font-semibold text-zinc-400 shrink-0">Keep speaking to add info</Text>
-            </View>
+              <Text className="text-[10px] font-black text-zinc-950 shrink-0">SEND ➔</Text>
+            </Pressable>
           ) : null}
         </View>
 

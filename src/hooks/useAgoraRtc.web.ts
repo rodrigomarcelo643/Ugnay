@@ -67,6 +67,24 @@ export function useAgoraRtc(
         const client = AgoraRTC.createClient({ mode: 'rtc', codec: 'vp8' });
         clientRef.current = client;
 
+        let hasPublished = false;
+        const publishTracksSafely = async () => {
+          if (hasPublished || !clientRef.current || !isMounted) return;
+          const c = clientRef.current;
+          const tracks = [localAudioTrackRef.current, localVideoTrackRef.current].filter(Boolean) as any[];
+          if (tracks.length === 0) return;
+
+          if (c.connectionState === 'CONNECTED') {
+            try {
+              await c.publish(tracks);
+              hasPublished = true;
+              console.log('[Agora Web] Local audio/video tracks published successfully!');
+            } catch (pubErr: any) {
+              console.warn('[Agora Web] Failed to publish tracks:', pubErr?.message || pubErr);
+            }
+          }
+        };
+
         client.on('user-published', async (user, mediaType) => {
           if (!isMounted) return;
           try {
@@ -78,7 +96,19 @@ export function useAgoraRtc(
             setRemoteUser(user);
 
             if (mediaType === 'audio' && user.audioTrack) {
-              user.audioTrack.play();
+              try {
+                await user.audioTrack.play();
+                console.log('[Agora Web] Remote audio track playing successfully!');
+              } catch (playErr) {
+                console.warn('[Agora Web] Remote audio play blocked by autoplay, attaching user gesture listener:', playErr);
+                const unlock = () => {
+                  try { user.audioTrack?.play(); } catch (e) {}
+                  window.removeEventListener('click', unlock);
+                  window.removeEventListener('touchstart', unlock);
+                };
+                window.addEventListener('click', unlock, { once: true });
+                window.addEventListener('touchstart', unlock, { once: true });
+              }
             }
           } catch (subErr) {
             console.warn('Error subscribing to remote Agora user:', subErr);
@@ -115,7 +145,10 @@ export function useAgoraRtc(
 
         client.on('connection-state-change', (curState) => {
           if (!isMounted) return;
-          if (curState === 'CONNECTED') setConnectionState('connected');
+          if (curState === 'CONNECTED') {
+            setConnectionState('connected');
+            publishTracksSafely();
+          }
           else if (curState === 'CONNECTING' || curState === 'RECONNECTING') setConnectionState('connecting');
           else if (curState === 'DISCONNECTED') setConnectionState('disconnected');
           else setConnectionState('failed');
@@ -204,19 +237,8 @@ export function useAgoraRtc(
 
         if (!isMounted) return;
 
-        const tracksToPublish = [micTrack, camTrack].filter(Boolean) as any[];
-        if (tracksToPublish.length > 0 && isMounted && clientRef.current) {
-          if (client.connectionState === 'CONNECTED') {
-            try {
-              await client.publish(tracksToPublish);
-              console.log('[Agora Web] Local tracks published successfully!');
-            } catch (pubErr: any) {
-              console.warn('[Agora Web] Failed to publish local tracks:', pubErr?.message || pubErr);
-            }
-          } else {
-            console.warn('[Agora Web] Skipping publish because client connection state is:', client.connectionState);
-          }
-        }
+        // Safely publish tracks (or publish as soon as connection completes)
+        await publishTracksSafely();
       } catch (err: any) {
         console.error('Agora client initialization error:', err);
         if (isMounted) {

@@ -124,12 +124,14 @@ export function useLiveSpeech(
         formData.append('temperature', '0.0');
         formData.append(
           'prompt',
-          'Emergency call: mic check, hello, rescue, tulong, medical, police, fire, Tagalog, English.'
+          'Emergency 911 dispatch Philippines: tulong, tabang, sunog, kalayo, baha, lunop, pulis, kawatan, ambulansya, medical, aksidente, rescue, Tagalog, Bisaya, Cebuano, English.'
         );
 
         const storeLang = useIncidentStore.getState().selectedLanguage;
         if (storeLang?.includes('Tagalog') || storeLang?.includes('Filipino')) {
           formData.append('language', 'tl');
+        } else if (storeLang?.includes('English')) {
+          formData.append('language', 'en');
         }
 
         const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
@@ -362,10 +364,8 @@ export function useLiveSpeech(
         typeof window !== 'undefined' &&
         Boolean((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
 
-      // Only start MediaRecorder Whisper batch polling if native browser streaming SpeechRecognition is absent
-      if (!hasNativeSpeech) {
-        createAndStartMediaRecorder(stream);
-      }
+      // Always start MediaRecorder for reliable OpenAI Whisper audio capture & transcription
+      createAndStartMediaRecorder(stream);
 
       const AudioCtx =
         typeof window !== 'undefined'
@@ -400,10 +400,10 @@ export function useLiveSpeech(
         setAudioLevel(normalized);
 
         // Voice Activity Detection (VAD)
-        if (normalized > 12) {
+        if (normalized > 10) {
           hasSpokenRecentlyRef.current = true;
-          // User barge-in: immediately silence/pause AI speaking when user speaks
-          if (AIService.isSpeaking()) {
+          // User barge-in: pause AI speaking when user speaks firmly (> 16%)
+          if (normalized > 16 && AIService.isSpeaking()) {
             AIService.interruptSpeech();
           }
           if (silenceFlushTimerRef.current) {
@@ -413,8 +413,8 @@ export function useLiveSpeech(
           if (onSpeechStartRef.current) {
             onSpeechStartRef.current();
           }
-        } else if (!hasNativeSpeech && hasSpokenRecentlyRef.current && normalized < 8) {
-          // Caller paused speaking: wait 380ms then flush recording to Whisper (fallback mode)
+        } else if (hasSpokenRecentlyRef.current && normalized < 8) {
+          // Caller paused speaking: wait 450ms then flush recording to Whisper
           if (!silenceFlushTimerRef.current) {
             silenceFlushTimerRef.current = setTimeout(() => {
               hasSpokenRecentlyRef.current = false;
@@ -432,7 +432,7 @@ export function useLiveSpeech(
               if (isListeningRef.current && mediaStreamRef.current?.active) {
                 createAndStartMediaRecorder(mediaStreamRef.current);
               }
-            }, 380);
+            }, 450);
           }
         }
 

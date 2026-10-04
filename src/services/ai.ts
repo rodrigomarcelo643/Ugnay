@@ -576,7 +576,9 @@ export const AIService = {
     // 1. FIRE (BFP - Bureau of Fire Protection)
     const fireKeywords = [
       'sunog', 'fire', 'apoy', 'kalayo', 'nasusunog', 'nasunog', 'aso', 'smoke',
-      'blaze', 'nagliliyab', 'lpg leak', 'sumabog', 'explosion', 'bumbero', 'bfp'
+      'blaze', 'nagliliyab', 'lpg leak', 'gas leak', 'sumabog', 'explosion', 'bumbero',
+      'bfp', 'flame', 'flames', 'burning', 'burnt', 'sunog sa balay', 'sunog sa bahay',
+      'kalamidad', 'kuryente sunog', 'electric fire'
     ];
     if (fireKeywords.some((k) => raw.includes(k))) {
       return {
@@ -588,11 +590,53 @@ export const AIService = {
       };
     }
 
-    // 2. FLOOD / TYPHOON (MDRRMO Rescue)
+    // 2. MEDICAL & ACCIDENT (EMS Ambulance)
+    const medicalKeywords = [
+      'medical', 'ambulansya', 'ambulance', 'ems', 'ospital', 'hospital', 'doktor', 'doctor',
+      'atake', 'heart attack', 'stroke', 'dugo', 'bleeding', 'nagdugo', 'samad', 'sugat',
+      'bali', 'nabali', 'fracture', 'kuyapan', 'nawalan ng malay', 'unconscious', 'hindi humihinga',
+      'di kaginahawa', 'hirap huminga', 'nahilo', 'aksidente', 'accident', 'bangga', 'nabangga',
+      'motorcycle crash', 'car crash', 'hit and run', 'nalason', 'poison', 'manganak', 'labor',
+      'emergency room', 'malubha', 'injured', 'biktima', 'pinsala', 'masakit ang dibdib',
+      'chest pain', 'seizure', 'hika', 'asthma', 'nahimatay', 'nasugatan', 'samdan',
+      'dili makaginhawa', 'naglisod og ginhawa', 'kamatayon', 'collapse', 'collapsed', 'head injury'
+    ];
+    if (medicalKeywords.some((k) => raw.includes(k))) {
+      return {
+        isMatch: true,
+        incidentType: 'MEDICAL',
+        responderType: 'EMS_AMBULANCE',
+        categoryLabel: 'Medical Emergency (EMS Ambulance)',
+        tags: ['Medical Response', 'EMS Paramedics', 'Patient Care'],
+      };
+    }
+
+    // 3. SECURITY / POLICE (PNP)
+    const securityKeywords = [
+      'pulis', 'police', 'pnp', 'holdup', 'hold-up', 'holdaper', 'snatcher', 'snatching',
+      'kawatan', 'magnanakaw', 'thief', 'robbery', 'robber', 'baril', 'pusil', 'gun',
+      'shooting', 'sinaksak', 'dunggab', 'stab', 'knife', 'kutsilyo', 'away', 'rambol',
+      'gulo', 'threat', 'banta', 'hostage', 'kidnap', 'carnap', 'pananakit', 'bugbog',
+      'trespassing', 'intruder', 'nakawan', 'ninakaw', 'nilooban', 'pinasok', 'assault',
+      'crime', 'shot', 'fight', 'patay', 'pumatay', 'nanakit', 'tulisan', 'gitulis'
+    ];
+    if (securityKeywords.some((k) => raw.includes(k))) {
+      return {
+        isMatch: true,
+        incidentType: 'SECURITY',
+        responderType: 'POLICE_DEPT',
+        categoryLabel: 'Security Emergency (PNP Police)',
+        tags: ['Police Response', 'PNP Precinct', 'Law Enforcement'],
+      };
+    }
+
+    // 4. FLOOD / TYPHOON / DISASTER (MDRRMO Rescue)
     const floodKeywords = [
       'baha', 'flood', 'tubig', 'lubog', 'anod', 'sulog', 'nagbaha', 'lunop',
       'bagyo', 'typhoon', 'storm', 'landslide', 'rescue boat', 'rumaragasang tubig',
-      'apaw ang sapa', 'mataas ang tubig', 'lumubog ang bahay'
+      'apaw ang sapa', 'mataas ang tubig', 'lumubog ang bahay', 'lumulubog',
+      'na-trap sa baha', 'trapped sa tubig', 'drrmo', 'mdrrmo', 'water rescue',
+      'evacuate', 'evacuation', 'lindol', 'earthquake', 'collapsed building'
     ];
     if (floodKeywords.some((k) => raw.includes(k))) {
       const isTyphoon = raw.includes('bagyo') || raw.includes('typhoon') || raw.includes('storm');
@@ -605,53 +649,56 @@ export const AIService = {
       };
     }
 
-    // 3. MEDICAL (EMS Ambulance)
-    const medicalKeywords = [
-      'medical', 'ambulansya', 'ambulance', 'ems', 'ospital', 'hospital', 'doktor', 'doctor',
-      'atake', 'heart attack', 'stroke', 'dugo', 'bleeding', 'nagdugo', 'samad', 'sugat',
-      'bali', 'nabali', 'fracture', 'kuyapan', 'nawalan ng malay', 'unconscious', 'hindi humihinga',
-      'di kaginahawa', 'hirap huminga', 'nahilo', 'aksidente', 'accident', 'bangga', 'nabangga',
-      'motorcycle crash', 'car crash', 'hit and run', 'nalason', 'poison', 'manganak', 'labor',
-      'emergency room', 'malubha', 'injured', 'biktima', 'pinsala'
-    ];
-    if (medicalKeywords.some((k) => raw.includes(k))) {
-      return {
-        isMatch: true,
-        incidentType: 'MEDICAL',
-        responderType: 'EMS_AMBULANCE',
-        categoryLabel: 'Medical Emergency (EMS Ambulance)',
-        tags: ['Medical Response', 'EMS Paramedics', 'Patient Care'],
-      };
-    }
-
-    // 4. SECURITY / POLICE (PNP)
-    const securityKeywords = [
-      'pulis', 'police', 'pnp', 'holdup', 'hold-up', 'snatcher', 'kawatan', 'magnanakaw',
-      'thief', 'robbery', 'robber', 'baril', 'pusil', 'gun', 'shooting', 'sinaksak',
-      'dunggab', 'stab', 'knife', 'kutsilyo', 'away', 'rambol', 'gulo', 'threat',
-      'banta', 'hostage', 'kidnap', 'carnap', 'pananakit', 'bugbog', 'trespassing', 'intruder'
-    ];
-    if (securityKeywords.some((k) => raw.includes(k))) {
-      return {
-        isMatch: true,
-        incidentType: 'SECURITY',
-        responderType: 'POLICE_DEPT',
-        categoryLabel: 'Security Emergency (PNP Police)',
-        tags: ['Police Response', 'PNP Precinct', 'Law Enforcement'],
-      };
-    }
-
-    // 5. IMMEDIATE DISTRESS / CRY FOR HELP (Tabang, Tulong, Saklolo, Rescue)
+    // 5. IMMEDIATE DISTRESS / CRY FOR HELP (Tabang, Tulong, Saklolo, Rescue, Emergency)
     const distressKeywords = [
       'tabang', 'tabangi', 'tabanga', 'tulong', 'tulungan', 'saklolo', 'help', 'rescue',
-      'disgrasya', 'nadisgrasya', 'emergency', 'nasamdan', 'samdan'
+      'disgrasya', 'nadisgrasya', 'emergency', 'nasamdan', 'samdan', 'sos', 'kailangan ng tulong',
+      'nagkinahanglan ug tabang', 'please help', 'help me'
     ];
     if (distressKeywords.some((k) => raw.includes(k))) {
+      // Check secondary context in distress call to pick best responder
+      if (raw.includes('apoy') || raw.includes('sunog') || raw.includes('kalayo') || raw.includes('smoke')) {
+        return {
+          isMatch: true,
+          incidentType: 'FIRE',
+          responderType: 'FIRE_DEPT',
+          categoryLabel: 'Fire Emergency (BFP Dispatch)',
+          tags: ['Immediate Distress', 'Fire Hazard', 'BFP Fire Rescue'],
+        };
+      }
+      if (raw.includes('baril') || raw.includes('pusil') || raw.includes('pulis') || raw.includes('kawatan') || raw.includes('holdap')) {
+        return {
+          isMatch: true,
+          incidentType: 'SECURITY',
+          responderType: 'POLICE_DEPT',
+          categoryLabel: 'Security Emergency (PNP Police)',
+          tags: ['Immediate Distress', 'Police Response', 'Law Enforcement'],
+        };
+      }
+      if (raw.includes('dugo') || raw.includes('sakit') || raw.includes('ospital') || raw.includes('injured') || raw.includes('sugat') || raw.includes('aksidente')) {
+        return {
+          isMatch: true,
+          incidentType: 'MEDICAL',
+          responderType: 'EMS_AMBULANCE',
+          categoryLabel: 'Medical Emergency (EMS Ambulance)',
+          tags: ['Immediate Distress', 'EMS Paramedics', 'Patient Care'],
+        };
+      }
+      if (raw.includes('baha') || raw.includes('tubig') || raw.includes('lubog') || raw.includes('anod')) {
+        return {
+          isMatch: true,
+          incidentType: 'FLOOD',
+          responderType: 'FLOOD_DRRMO',
+          categoryLabel: 'Flood Rescue (MDRRMO Water Rescue)',
+          tags: ['Immediate Distress', 'MDRRMO Water Rescue'],
+        };
+      }
+
       return {
         isMatch: true,
         incidentType: 'GENERAL',
-        responderType: 'EMS_AMBULANCE',
-        categoryLabel: 'Emergency Distress Call (DRRMO / Rescue)',
+        responderType: 'FLOOD_DRRMO',
+        categoryLabel: 'Emergency Distress Call (DRRMO / 911 Command)',
         tags: ['Immediate Distress', 'DRRMO Dispatch', 'Emergency Rescue'],
       };
     }

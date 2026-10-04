@@ -35,17 +35,28 @@ export default function CallerAnalyzing() {
     const callerAddress = addressString || 'Arthaland Century Pacific Tower, 5th Ave cor 30th St, BGC, Taguig, Metro Manila';
 
     const dispatchAndRedirect = (analysis: any) => {
-      const incidentType = analysis.incident_type && analysis.incident_type !== 'UNMATCHED'
+      const quickMatch = AIService.matchResponderCategory(speechTranscript);
+      let incidentType = analysis.incident_type && analysis.incident_type !== 'UNMATCHED'
         ? analysis.incident_type
         : 'GENERAL';
+
+      // If OpenAI returned GENERAL or UNMATCHED, but keyword match detected specific emergency, use it!
+      if (incidentType === 'GENERAL' && quickMatch.isMatch && quickMatch.incidentType !== 'UNMATCHED') {
+        incidentType = quickMatch.incidentType;
+      }
+      if (analysis.matched_responder === 'FIRE_DEPT') incidentType = 'FIRE';
+      else if (analysis.matched_responder === 'EMS_AMBULANCE') incidentType = 'MEDICAL';
+      else if (analysis.matched_responder === 'POLICE_DEPT') incidentType = 'SECURITY';
+      else if (analysis.matched_responder === 'FLOOD_DRRMO') incidentType = 'FLOOD';
+
       const matchedDept = DepartmentService.getNearestDepartment(incidentType, callerLat, callerLng);
 
       setAnalysisResult({
         type: incidentType,
-        priority: analysis.priority || 'MEDIUM',
+        priority: analysis.priority || (incidentType === 'FIRE' || incidentType === 'SECURITY' ? 'HIGH' : incidentType === 'MEDICAL' ? 'CRITICAL' : 'MEDIUM'),
         departmentName: matchedDept.name,
         missingInfo: analysis.missing_information || [],
-        categoryTags: analysis.category_tags || [],
+        categoryTags: analysis.category_tags?.length > 0 ? analysis.category_tags : quickMatch.tags,
       });
 
       const incidentPayload = {
