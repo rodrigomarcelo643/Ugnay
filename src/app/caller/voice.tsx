@@ -295,11 +295,6 @@ export default function CallerVoice() {
     startListening();
   };
 
-  const handleQuickCategoryDispatch = (categoryName: string) => {
-    if (isBusyOnCall) return;
-    const promptText = `${categoryName} emergency reported via UGNAY voice dispatch interface`;
-    triggerAutoDispatch(promptText);
-  };
 
   const handleCancelCallToReportAgain = async () => {
     if (activeIncident?.id) {
@@ -425,27 +420,6 @@ export default function CallerVoice() {
                     }`}
                 >
                   {lang.label}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-
-          {/* 1-Tap Emergency Category Dispatch (Bypasses Deadair) */}
-          <View className="flex-row flex-wrap items-center justify-center gap-2 mt-2.5">
-            {[
-              { label: '🔥 FIRE', category: 'Fire' },
-              { label: '🚑 MEDICAL', category: 'Medical' },
-              { label: '🚓 POLICE', category: 'Police' },
-              { label: '🌊 FLOOD', category: 'Flood' },
-            ].map((cat) => (
-              <Pressable
-                key={cat.category}
-                onPress={() => handleQuickCategoryDispatch(cat.category)}
-                disabled={isBusyOnCall}
-                className="bg-[#18181B] border border-[#27272A] active:bg-zinc-800 px-3 py-1.5 rounded-full"
-              >
-                <Text className="text-xs font-black text-amber-300">
-                  {cat.label}
                 </Text>
               </Pressable>
             ))}
